@@ -105,3 +105,21 @@ def test_classify_keywords():
     d = doc_from_lines("TAX INVOICE", "Invoice number 1", "Total due")
     c = extractor().classify(d, ["invoice", "bank statement"])
     assert c.label == "invoice"
+
+
+def test_a_near_miss_word_in_a_company_name_is_not_a_label():
+    """'Supplies' is one letter from the label 'Supplier': in the middle of 'Globex Supplies Ltd' it is a word of the
+    name, so the supplier comes from the heading, not as 'Ltd' (found in the OOA platform's test lab, 14 Nov 2026)."""
+    d = doc_from_lines("Globex Supplies Ltd", "TAX INVOICE", "Invoice Number: GX-7781", "Total: 2,300.00")
+    s = FieldSchema(name="inv", fields=[FieldDef(name="supplier_name", type="string", label="Supplier", aliases=["Vendor"],
+                                                 fallback="header_company")])
+    f = {x.name: x for x in extractor().extract(ExtractRequest(document=d, schema=s))}
+    assert f["supplier_name"].value == "Globex Supplies Ltd"
+
+
+def test_a_near_miss_label_still_counts_at_the_start_of_a_line_or_before_a_colon():
+    d = doc_from_lines("Suppliar ACME Trading LLC", "Invoice Numbr: INV-9")
+    s = FieldSchema(name="inv", fields=[FieldDef(name="supplier_name", type="string", label="Supplier"),
+                                        FieldDef(name="invoice_number", type="string", label="Invoice Number")])
+    f = {x.name: x.value for x in extractor().extract(ExtractRequest(document=d, schema=s))}
+    assert f == {"supplier_name": "ACME Trading LLC", "invoice_number": "INV-9"}

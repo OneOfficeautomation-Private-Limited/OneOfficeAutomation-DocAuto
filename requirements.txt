@@ -23,6 +23,8 @@ pytesseract>=0.3.10
 # boto3                     -> aws-textract
 # google-cloud-documentai   -> google-docai
 # (azure-di uses httpx, no SDK needed)
+# option pack 3 (AI): the Claude connector uses Anthropic's SDK; it stays off until a key is set
+anthropic>=0.40
 # dev / samples
 pytest>=8.0
 reportlab>=4.0

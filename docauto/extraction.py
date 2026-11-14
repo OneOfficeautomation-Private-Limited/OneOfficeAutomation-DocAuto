@@ -204,10 +204,14 @@ class RulesExtractor(ExtractionProvider):
                         continue
                     start, end, fuzzy = hit
                     s = len(label) + (5 if line.text[:start].strip(" :#-") == "" else 0) - (3 if fuzzy else 0)
-                    matches.append((s, p, i, line, end, fuzzy))
-        matches.sort(key=lambda m: (m[5], -m[0]))  # exact label matches before fuzzy ones
-        for _, p, i, line, end, fuzzy in matches:
+                    matches.append((s, p, i, line, start, end, fuzzy))
+        matches.sort(key=lambda m: (m[6], -m[0]))  # exact label matches before fuzzy ones
+        for _, p, i, line, start, end, fuzzy in matches:
             rest = line.text[end:]
+            # a near-miss in the middle of a line, with no ':' after it, is a word, not a label
+            # ("Globex Supplies Ltd" is a company name, not "Supplier: Ltd")
+            if fuzzy and line.text[:start].strip(" :#-\t") and not re.match(r"\s*[:：]", rest):
+                continue
             colon = re.search(r"[:：]", rest)
             if colon and re.search(r"[A-Za-z\u0600-\u06FF]{2,}", rest[:colon.start()]):
                 continue  # the printed label is longer ("Supplier VAT No:" is not "Supplier:")
