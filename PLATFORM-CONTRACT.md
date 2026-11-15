@@ -74,6 +74,9 @@ The console's screens (`platform/ui/src/docflow/http.ts`), through the proxy:
 | GET, PUT | `admin/settings` | Engine settings and routing (`{"values": {...}}`) |
 | POST | `admin/providers/{id}/test` | Test one engine |
 | GET | `documents/{id}/result` | OCR text and which engines read it |
+| GET | `df/folders?path=` | Folder picker (3.2.0): no `path`, the folders processes may use; with `path`, the folders inside it |
+| POST | `df/folders` | New folder inside one processes may use: `{"path", "name"}` (3.2.0) |
+| POST | `df/folders/preview` | What a list of folders being edited would give, saving nothing: `{"folders"}` (3.2.0) |
 
 The proxy also allows `documents/{id}/page/{n}.png` and `documents/{id}/file`, and any other `df/...` route. It never
 forwards `admin/update` or `admin/installer.bat`.
@@ -92,6 +95,11 @@ forwards `admin/update` or `admin/installer.bat`.
   `parent_id`, `doctype_id`, `flags`, `validated_by`, and with `fields=true` also `fields`, `confidence`, `pages`,
   `engines`.
 - **`POST df/flows/{id}/documents`**: `{"documents": [{"fileName", "documentId", "status", ...}]}`.
+- **`df/folders`** (3.2.0), no `path`: `limited` (false: no list, any folder works), `roots[]` (`name`, `path`,
+  `access`, `usedBy[]` of `id`, `name`), `outside[]` (`id`, `name`, `use` = `watched`/`results`, `path`). With
+  `path`: `path`, `name`, `root` (`name`, `path`), `parent` (null at a listed folder), `access`, `waiting`,
+  `watchedBy[]`, `folders[]` (`name`, `path`, `waiting`, `watchedBy[]`), `truncated`. `access` is `ok` (read and move
+  files), `read`, `missing` or `denied`. A path outside the list is 403; no list is 400.
 - **Document statuses**: `queued`, `processing`, `success`, `validation`, `validated`, `invalid`, `failed`, `split`.
 
 ### What the Command Center adds to a process before saving it

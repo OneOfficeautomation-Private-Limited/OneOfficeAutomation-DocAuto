@@ -22,6 +22,7 @@ import csv
 import io
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -34,8 +35,8 @@ from typing import Any, Literal, Optional
 import httpx
 from pydantic import BaseModel, Field
 
-from . import einvoice, events, outbox, pii
-from .errors import DocAutoError, InvalidInput
+from . import einvoice, events, folders, outbox, pii
+from .errors import DocAutoError, InvalidInput, PolicyDenied
 from .extraction import coerce, safe_eval
 from .grounding import locations
 from .models import DocumentResult, ExtractedField, FieldDef, FieldSchema, ReviewReason, ReviewStatus
@@ -597,6 +598,7 @@ class DocFlowService:
         self._stop = threading.Event()
         self._watcher: Optional[threading.Thread] = None
         self._last_poll: dict[str, float] = {}
+        self._outside_said: set[tuple[str, str]] = set()   # watched folders outside the list, logged once each
         svc.post_processors.append(self._post_process)
         svc.listeners.append(self._on_event)
         self._seed()
@@ -710,6 +712,27 @@ class DocFlowService:
             raise InvalidInput(f"unknown flow '{flow_id}'")
         return Flow.model_validate_json(b)
 
+    @staticmethod
+    def _folder_uses(fl: Flow) -> list[tuple[str, str, str]]:
+        """The folders a process uses: (what, label, path) for its watched folder and its folder / Excel results."""
+        out = [("watched", "watched folder", fl.intake.inputFolder)] if fl.intake.inputFolder else []
+        out += [("results", f"delivery '{d.name or d.type}'", str(d.params["path"]))
+                for d in fl.deliveries if d.type in ("folder", "excel") and d.params.get("path")]
+        return out
+
+    def _check_folders(self, fl: Flow, before: Optional[Flow]) -> None:
+        """A new or changed folder must be one of the folders processes may use (when the administrator listed any).
+        A folder the saved process already had is not checked again: the process can still be edited, while the
+        watcher and the deliveries leave a folder outside the list alone."""
+        rs = folders.roots(self.tenant)
+        if not rs:
+            return
+        had = {(what, folders.real(p)) for what, _, p in self._folder_uses(before)} if before else set()
+        for what, label, p in self._folder_uses(fl):
+            if (what, folders.real(p)) not in had and folders.inside(p, rs) is None:
+                raise InvalidInput(f"{label}: '{p}' is not one of the folders processes may use. Choose a folder "
+                                   "from the list (an administrator sets it in Settings > Document Automation)")
+
     def _check_flow(self, fl: Flow) -> None:
         if not fl.name.strip():
             raise InvalidInput("name is required")
@@ -739,8 +762,11 @@ class DocFlowService:
             if d.type in ("folder", "excel") and not d.params.get("path"):
                 raise InvalidInput(f"delivery '{d.name or d.type}': path is required")
 
-    def save_flow(self, fl: Flow, new: bool = False) -> Flow:
+    def save_flow(self, fl: Flow, new: bool = False, check_folders: bool = True) -> Flow:
         self._check_flow(fl)
+        if check_folders:
+            b = None if new or not fl.id else self.store.df_get("flow", fl.id)
+            self._check_folders(fl, Flow.model_validate_json(b) if b else None)
         with self._lock:
             if new:
                 base = fl.id or _slug(fl.name, "flow")
@@ -1126,6 +1152,9 @@ class DocFlowService:
                 # 4xx other than timeout / too many requests: the receiver refused it, a retry will not help
                 return ok, f"HTTP {r.status_code}", not ok and not (400 <= r.status_code < 500
                                                                      and r.status_code not in (408, 429))
+            if dv.type in ("folder", "excel") and not folders.allowed(str(dv.params.get("path", "")), self.tenant):
+                return False, (f"'{dv.params.get('path')}' is not one of the folders processes may use: choose a folder "
+                               "from the list in the process"), False
             if dv.type == "folder":
                 folder = Path(dv.params["path"]) / status
                 folder.mkdir(parents=True, exist_ok=True)
@@ -1305,7 +1334,9 @@ class DocFlowService:
     # ---------------------------------------------------------------- folders + SLA watcher
     def scan_folder(self, fl: Flow, require_live: bool = True) -> list[dict]:
         src = Path(fl.intake.inputFolder) if fl.intake.inputFolder else None
-        if not src or not src.is_dir():
+        if not src or not self.folder_allowed(str(src), fl):
+            return []
+        if not src.is_dir():
             return []
         done = src / "processed"
         done.mkdir(exist_ok=True)
@@ -1324,6 +1355,90 @@ class DocFlowService:
                 log.exception("folder intake failed for %s", p)
                 out.append({"file": p.name, "error": str(e)})
         return out
+
+    # ---------------------------------------------------------------- folders processes may use (3.2.0)
+    def folder_allowed(self, path: str, fl: Optional[Flow] = None) -> bool:
+        """May a process use this folder now? Says once in the log when a watched folder is outside the list."""
+        if folders.allowed(path, self.tenant):
+            return True
+        if fl is not None and (fl.id, path) not in self._outside_said:
+            self._outside_said.add((fl.id, path))
+            log.warning("process %s: watched folder %s is not one of the folders processes may use; not read", fl.id, path)
+        return False
+
+    def folder_roots(self, value: Optional[str] = None) -> dict:
+        """The folders processes may use (value: a list being edited, not saved yet), DocFlow's access to each, the
+        processes using each, and the processes using a folder outside the list."""
+        rs = folders.roots(self.tenant, value)
+        uses = [(f, what, p) for f in self.flows() for what, _, p in self._folder_uses(f)]
+        out = []
+        for r in rs:
+            by = {f.id: f.name for f, _, p in uses if folders.inside(p, [r]) is not None}
+            out.append({"name": r.name, "path": r.path, "access": folders.access(r.path),
+                        "usedBy": [{"id": k, "name": v} for k, v in by.items()]})
+        outside = [{"id": f.id, "name": f.name, "use": what, "path": p}
+                   for f, what, p in uses if rs and folders.inside(p, rs) is None]
+        return {"limited": bool(rs), "roots": out, "outside": outside}
+
+    def browse_folder(self, path: str) -> dict:
+        """One folder inside the list: the folders in it (never files), how many files each would read straight away,
+        and which process already watches each. Nothing outside the list is shown."""
+        rs = folders.roots(self.tenant)
+        if not rs:
+            raise InvalidInput("No folders are listed for processes yet: an administrator adds them in Settings > "
+                               "Document Automation")
+        shown = os.path.normpath(path.strip()) if path.strip() else ""
+        root = folders.inside(shown, rs) if shown and os.path.isabs(shown) else None
+        if root is None:
+            raise PolicyDenied(f"'{path}' is not one of the folders processes may use")
+        if not os.path.isdir(shown):
+            raise InvalidInput(f"Folder not found: {shown}")
+        watched: dict[str, list[dict]] = {}
+        for f in self.flows():
+            if f.intake.inputFolder:
+                watched.setdefault(folders.real(f.intake.inputFolder), []).append({"id": f.id, "name": f.name})
+        subs, truncated = [], False
+        try:
+            with os.scandir(shown) as it:
+                entries = sorted(it, key=lambda e: e.name.lower())
+        except OSError as e:
+            raise InvalidInput(f"DocFlow cannot open {shown}: {e.strerror or e}")
+        for e in entries:
+            try:
+                if not e.is_dir() or folders.hidden(e):
+                    continue
+            except OSError:
+                continue
+            sub = os.path.join(shown, e.name)
+            if folders.inside(sub, [root]) is None:       # a link that points outside the allowed folder
+                continue
+            if len(subs) >= folders.MAX_FOLDERS:
+                truncated = True
+                break
+            subs.append({"name": e.name, "path": sub, "waiting": folders.count_files(sub, SUPPORTED_EXT),
+                         "watchedBy": watched.get(folders.real(sub), [])})
+        at_root = folders.real(shown) == root.real
+        return {"path": shown, "name": root.name if at_root else os.path.basename(shown),
+                "root": {"name": root.name, "path": root.path},
+                "parent": None if at_root else os.path.dirname(shown),
+                "access": folders.access(shown), "waiting": folders.count_files(shown, SUPPORTED_EXT),
+                "watchedBy": watched.get(folders.real(shown), []), "folders": subs, "truncated": truncated}
+
+    def make_folder(self, parent: str, name: str) -> dict:
+        """A new folder inside a folder processes may use; returns it as browse_folder does."""
+        try:
+            name = folders.check_name(name)
+        except ValueError as e:
+            raise InvalidInput(str(e))
+        here = self.browse_folder(parent)                  # inside the list, exists
+        target = os.path.join(here["path"], name)
+        if os.path.exists(target):
+            raise InvalidInput(f"There is already a folder or file named '{name}' in {here['path']}")
+        try:
+            os.mkdir(target)
+        except OSError as e:
+            raise InvalidInput(f"DocFlow cannot make the folder {target}: {e.strerror or e}")
+        return self.browse_folder(target)
 
     def check_sla(self) -> int:
         n = 0
@@ -1429,6 +1544,7 @@ class DocFlowService:
                                                      params={"path": inst["folders"]["outputFolder"]},
                                                      on=["success", "validation", "validated", "invalid", "failed"])]
                                 if inst.get("folders", {}).get("outputFolder") else [],
-                                status="live" if inst.get("status") == "published" else "draft"), new=True)
+                                status="live" if inst.get("status") == "published" else "draft"), new=True,
+                           check_folders=False)
             n += 1
         return n

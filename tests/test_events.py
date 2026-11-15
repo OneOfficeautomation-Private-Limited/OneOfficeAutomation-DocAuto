@@ -124,6 +124,7 @@ def test_delivery_failed_and_review_overdue(client, emitted, monkeypatch):
         raise dfm.httpx.ConnectError("refused")
     monkeypatch.setattr(dfm.httpx, "post", down)
     monkeypatch.setattr(outbox, "BACKOFF", 0.01)          # retries with backoff, then delivery_failed
+    monkeypatch.setattr(outbox, "MAX_ATTEMPTS", 3)        # not 10: 5 s of backoff made it miss the wait on slow runners
     fid = client.post(f"{DF}/flows", json={
         "name": "Slow", "docTypes": ["invoice"], "review": {"fieldThresholds": {"total": 0.999}, "slaHours": 0},
         "deliveries": [{"type": "webhook", "name": "ERP", "on": ["validation"], "params": {"url": "http://erp.local/hook"}}]}).json()["id"]

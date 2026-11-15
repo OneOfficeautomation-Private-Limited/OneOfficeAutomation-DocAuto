@@ -28,6 +28,11 @@ DEPLOYMENT = [
     {"key": "DOCAUTO_PLATFORM_URL", "label": "Command Center address", "type": "text", "default": "",
      "placeholder": "http://127.0.0.1:8720",
      "help": "Where \"Start a bot\" deliveries start their bot. In SaaS, {tenant} is replaced by the tenant."},
+    {"key": "DOCAUTO_ALLOWED_FOLDERS", "label": "Folders processes may use", "type": "text", "default": "",
+     "placeholder": "Scans=\\\\scan01\\scans; D:\\DocFlow\\incoming",
+     "help": "Processes may watch, and save results in, only these folders on this server and the folders inside "
+             "them. Separate folders with ';'; 'Name=folder' gives a folder the name people see. Empty = any folder "
+             "(as before 3.2.0). In SaaS, {tenant} is replaced by the tenant."},
     {"key": "DOCAUTO_RETENTION_DAYS", "label": "Keep documents for (days)", "type": "number", "default": "30",
      "help": "Documents (files, results) older than this are deleted every day. 0 = keep forever. Documents still "
              "waiting for review and test-set documents are kept."},
@@ -223,6 +228,9 @@ def apply(values: dict[str, Any]) -> dict[str, str]:
         v = "" if v is None else str(v).strip()
         if "\n" in v or "\r" in v:
             raise ValueError(f"'{k}' must be a single line")
+        if k == "DOCAUTO_ALLOWED_FOLDERS":
+            from .folders import parse
+            parse(v, strict=True)          # every folder a full path
         changed[k] = v
     if changed:
         write_env(changed)

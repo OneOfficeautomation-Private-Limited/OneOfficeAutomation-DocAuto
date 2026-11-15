@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from .. import __version__, tenants
+from .. import folders as folders_mod
 from ..config import load_config
 from ..errors import DocAutoError, InvalidInput, PolicyDenied, ProviderUnavailable, UnsupportedCapability
 from ..models import FieldSchema
@@ -690,9 +691,44 @@ def df_scan(flow_id: str, _: str = Depends(auth)):
     fl = docflow().flow(flow_id)
     if not fl.intake.inputFolder:
         raise HTTPException(400, "no input folder configured")
+    if not docflow().folder_allowed(fl.intake.inputFolder):
+        raise HTTPException(400, f"input folder is not one of the folders processes may use: {fl.intake.inputFolder}")
     if not Path(fl.intake.inputFolder).is_dir():
         raise HTTPException(400, f"input folder not found: {fl.intake.inputFolder}")
     return {"ingested": docflow().scan_folder(fl, require_live=False)}
+
+
+# ---- folders processes may use (3.2.0): the Command Center's folder picker
+@app.get(f"{DF}/folders")
+def df_folders(path: str = "", _: str = Depends(auth)):
+    """No path: the listed folders, DocFlow's access to each and the processes using them. With a path inside the
+    list: the folders in it (never files). Read-only."""
+    return docflow().browse_folder(path) if path else docflow().folder_roots()
+
+
+class _FolderList(BaseModel):
+    folders: str = ""
+
+
+@app.post(f"{DF}/folders/preview")
+def df_folders_preview(body: _FolderList, _: str = Depends(auth)):
+    """What a list being edited would give, before it is saved (writes nothing)."""
+    try:
+        folders_mod.parse(body.folders, strict=True)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return docflow().folder_roots(body.folders)
+
+
+class _NewFolder(BaseModel):
+    path: str
+    name: str
+
+
+@app.post(f"{DF}/folders")
+def df_new_folder(body: _NewFolder, _: str = Depends(auth)):
+    """A new folder inside a folder processes may use."""
+    return docflow().make_folder(body.path, body.name)
 
 
 # ---- documents & review desk

@@ -126,6 +126,7 @@ deliveries go through a durable outbox: they survive restarts, are retried with 
 | `DOCAUTO_DATABASE_URL` | empty = embedded PostgreSQL in `<data dir>/postgres` | the PostgreSQL server (UTF8) |
 | `DOCAUTO_FILE_KEY` | empty = generated into `<data dir>/file.key` | Fernet key(s) for documents at rest; `new,old` rotates |
 | `DOCAUTO_RETENTION_DAYS` | 30 | documents older than this are deleted daily; 0 = keep forever |
+| `DOCAUTO_ALLOWED_FOLDERS` | empty = any folder | folders on this server that processes may watch and save results in (and the folders inside them), separated by `;`, each optionally `Name=folder`; the Command Center's folder picker shows only these. A folder outside the list is refused when a process is saved, not read by the watcher and not written by deliveries. `{tenant}` is replaced in SaaS |
 | `DOCAUTO_MASK_PII` | true | mask national IDs / Iqama, IBANs, phones, e-mails before cloud AI models (then no page images unless a process allows them) |
 | `DOCAUTO_DB_POOL_SIZE` | 20 | database connections per server and process |
 | `DOCAUTO_JOB_STALE_SECONDS` | 90 | a running job without heartbeat this long is taken over by another worker |

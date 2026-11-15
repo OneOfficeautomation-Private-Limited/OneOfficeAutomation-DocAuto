@@ -54,6 +54,9 @@ PLATFORM_ROUTES = [
     ("GET", "documents/{x}/result"),
     ("GET", "documents/{x}/page/{x}.png"),
     ("GET", "documents/{x}/file"),
+    ("GET", "df/folders"),                 # 3.2.0: the folder picker
+    ("POST", "df/folders"),
+    ("POST", "df/folders/preview"),
 ]
 
 
