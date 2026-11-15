@@ -71,12 +71,12 @@ def test_the_list_limits_watched_and_result_folders(client, tmp_path, monkeypatc
                                                excel=tmp_path / "out" / "ap.xlsx"))
     assert ok.status_code == 200, ok.text
     r = client.post(f"{DF}/flows", json=flow("Bad watch", tmp_path / "elsewhere"))
-    assert r.status_code == 400 and "watched folder" in r.json()["message"] \
+    assert r.status_code == 400 and "Watched folder" in r.json()["message"] \
         and "not one of the folders processes may use" in r.json()["message"]
     r = client.post(f"{DF}/flows", json=flow("Bad results", scans, results=tmp_path / "elsewhere"))
-    assert r.status_code == 400 and "delivery 'Archive'" in r.json()["message"]
+    assert r.status_code == 400 and "Delivery 'Archive'" in r.json()["message"]
     r = client.post(f"{DF}/flows", json=flow("Bad register", excel=tmp_path / "elsewhere" / "x.xlsx"))
-    assert r.status_code == 400 and "delivery 'Register'" in r.json()["message"]
+    assert r.status_code == 400 and "Delivery 'Register'" in r.json()["message"]
     r = client.post(f"{DF}/flows", json=flow("Climbs out", str(scans) + os.sep + ".." + os.sep + "elsewhere"))
     assert r.status_code == 400                                              # '..' is resolved before the check
 
