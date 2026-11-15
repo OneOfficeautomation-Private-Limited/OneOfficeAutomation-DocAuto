@@ -715,8 +715,8 @@ class DocFlowService:
     @staticmethod
     def _folder_uses(fl: Flow) -> list[tuple[str, str, str]]:
         """The folders a process uses: (what, label, path) for its watched folder and its folder / Excel results."""
-        out = [("watched", "watched folder", fl.intake.inputFolder)] if fl.intake.inputFolder else []
-        out += [("results", f"delivery '{d.name or d.type}'", str(d.params["path"]))
+        out = [("watched", "Watched folder", fl.intake.inputFolder)] if fl.intake.inputFolder else []
+        out += [("results", f"Delivery '{d.name or d.type}'", str(d.params["path"]))
                 for d in fl.deliveries if d.type in ("folder", "excel") and d.params.get("path")]
         return out
 
