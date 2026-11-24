@@ -95,7 +95,7 @@ storage:
   retention_days: ${DOCAUTO_RETENTION_DAYS:-30}   # documents older than this are deleted daily (0 = keep forever)
 
 languages:
-  offered: ${DOCAUTO_OFFERED_LANGUAGES:-en,ar}   # the languages offered for document types (codes, comma separated)
+  offered: ${DOCAUTO_OFFERED_LANGUAGES:-}   # offered for document types (codes, comma separated); empty: what the OCR engines read
 
 privacy:
   mask_pii: ${DOCAUTO_MASK_PII:-true}   # mask IDs, IBANs, phones and e-mails before cloud AI models (never for local ones)

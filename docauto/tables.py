@@ -26,7 +26,14 @@ from .normalize import detect_direction, union_bbox
 _TOTAL = r"tota[l1i|\]]"
 _TOTALS = re.compile(r"(?i)^(?:sub[\s-]*" + _TOTAL + "|" + _TOTAL + r"|grand\s+" + _TOTAL + r"|net\s+" + _TOTAL +
                      r"|vat|tax|amount\s+due|balance(?:\s+due)?|"
-                     r"discount|shipping|المجموع|الإجمالي|الاجمالي|المجموع الفرعي|ضريبة|الضريبة|المبلغ المستحق|الخصم)(?!\w)")
+                     r"discount|shipping|"
+                     # other languages: subtotal / total / tax / discount / amount due
+                     r"zwischensumme|gesamt(?:betrag|summe)?|summe|netto|mwst|ust|rabatt|"
+                     r"sous[\s-]*total|total\s+(?:ht|ttc)|montant|tva|remise|"
+                     r"importe(?:\s+total)?|base\s+imponible|iva|descuento|valor\s+total|desconto|"
+                     r"totale|imponibile|sconto|totaal|subtotaal|btw|korting|gst|igst|cgst|sgst|"
+                     r"итого|всего|ндс|合计|总计|小计|合計|小計|税额|消費税|합계|부가세|कुल|"
+                     r"المجموع|الإجمالي|الاجمالي|المجموع الفرعي|ضريبة|الضريبة|المبلغ المستحق|الخصم)(?!\w)")
 MIN_COLUMNS = 2            # captions of at least this many columns make a header row
 HEADER_SHARE = 0.6         # ...and they are most of the row's words (not "Total Amount: 1,000")
 CONFIDENCE = 0.85          # a table rebuilt from layout: a little less sure than the words themselves

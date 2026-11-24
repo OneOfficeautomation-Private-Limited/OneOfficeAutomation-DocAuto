@@ -92,18 +92,54 @@ def union_bbox(boxes: Iterable[BBox]) -> Optional[BBox]:
     return BBox(x=x0, y=y0, w=x1 - x0, h=y1 - y0)
 
 
+# a letter's script, from the start of its Unicode name, and the language code the script most likely means
+_SCRIPT_LANG = {"ARABIC": "ar", "HEBREW": "he", "CYRILLIC": "ru", "GREEK": "el", "CJK": "zh", "HIRAGANA": "ja",
+                "KATAKANA": "ja", "HANGUL": "ko", "DEVANAGARI": "hi", "BENGALI": "bn", "TAMIL": "ta", "TELUGU": "te",
+                "KANNADA": "kn", "MALAYALAM": "ml", "GUJARATI": "gu", "GURMUKHI": "pa", "THAI": "th", "LAO": "lo",
+                "KHMER": "km", "MYANMAR": "my", "GEORGIAN": "ka", "ARMENIAN": "hy", "ETHIOPIC": "am", "SINHALA": "si",
+                "LATIN": "en", "SYRIAC": "syr", "THAANA": "dv", "NKO": "nqo"}
+_RTL_SCRIPTS = {"ARABIC", "HEBREW", "SYRIAC", "THAANA", "NKO"}
+
+
+def _script(c: str) -> str:
+    import unicodedata
+    try:
+        n = unicodedata.name(c)
+    except ValueError:
+        return ""
+    if _ARABIC.match(c):
+        return "ARABIC"
+    head = n.split(" ", 1)[0]
+    return "CJK" if head in ("CJK", "IDEOGRAPHIC") else head
+
+
+def scripts(text: str) -> dict[str, int]:
+    """How many letters of each script the text has."""
+    out: dict[str, int] = {}
+    for c in text:
+        if c.isalpha():
+            s = _script(c)
+            if s:
+                out[s] = out.get(s, 0) + 1
+    return out
+
+
 def detect_direction(text: str) -> str:
-    """'rtl' when most letters are Arabic script."""
-    letters = [c for c in text if c.isalpha()]
-    if not letters:
+    """'rtl' when most letters are of a right-to-left script (Arabic, Hebrew, Syriac, Thaana, N'Ko)."""
+    counts = scripts(text)
+    total = sum(counts.values())
+    if not total:
         return "ltr"
-    ar = sum(1 for c in letters if _ARABIC.match(c))
-    return "rtl" if ar / len(letters) > 0.5 else "ltr"
+    return "rtl" if sum(v for k, v in counts.items() if k in _RTL_SCRIPTS) / total > 0.5 else "ltr"
 
 
 def detect_language(text: str) -> Optional[str]:
-    letters = [c for c in text if c.isalpha()]
-    if not letters:
+    """The likely language from the main script of the text (Latin is reported as "en": the script, not the
+    language, is known). Japanese text mixes kana and Chinese characters: any kana makes it Japanese."""
+    counts = scripts(text)
+    if not counts:
         return None
-    ar = sum(1 for c in letters if _ARABIC.match(c))
-    return "ar" if ar / len(letters) > 0.5 else "en"
+    if counts.get("HIRAGANA") or counts.get("KATAKANA"):
+        return "ja"
+    main = max(counts, key=counts.get)
+    return _SCRIPT_LANG.get(main, "en")

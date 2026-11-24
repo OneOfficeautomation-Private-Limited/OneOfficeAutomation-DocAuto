@@ -27,8 +27,9 @@ def test_codes_map_to_each_engine():
 
 def test_offered_list_parses_and_defaults():
     assert languages.offered({"languages": {"offered": "en, ar ,ur,en"}}) == ["en", "ar", "ur"]
-    assert languages.offered({"languages": {"offered": None}}) == ["en", "ar"]
-    assert languages.offered({}) == ["en", "ar"]
+    # not set: English (with the engines known, what they read; see the endpoint test)
+    assert languages.offered({"languages": {"offered": None}}) == ["en"]
+    assert languages.offered({}) == ["en"]
 
 
 def _registry(**engines):
@@ -82,12 +83,15 @@ def client(tmp_path, monkeypatch):
 
 def test_languages_endpoint_and_offered_setting(client):
     out = client.get(f"{API}/df/languages").json()
-    assert [x["code"] for x in out if x["offered"]] == ["en", "ar"]
+    # not set: every language the OCR engines here read, English first (only English when none is installed)
+    offered = [x["code"] for x in out if x["offered"]]
+    installed = [x["code"] for x in out if x["installed"]]
+    assert offered[0] == "en" and set(offered) == (set(installed) | {"en"} if installed else {"en"})
     assert {"code", "name", "engines", "installed", "offered"} <= set(out[0])
     if shutil.which("tesseract"):
         assert next(x for x in out if x["code"] == "en")["installed"]
     setting = next(f for f in client.get(f"{API}/admin/settings").json()["defaults"] if f["key"] == "DOCAUTO_OFFERED_LANGUAGES")
-    assert setting["value"] == "en,ar"
+    assert setting["value"] == ""
     r = client.put(f"{API}/admin/settings", json={"values": {"DOCAUTO_OFFERED_LANGUAGES": "en,ar,ur"}})
     assert r.status_code == 200, r.text
     out = client.get(f"{API}/df/languages").json()

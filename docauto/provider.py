@@ -54,9 +54,17 @@ class ProviderInfo:
         return max((self.creditCostPerPage.get(c.value, 0.0) for c in capabilities), default=0.0)
 
     def supports_languages(self, langs: list[str]) -> bool:
+        """An engine that reads at least one of the languages may be used (it reads what it can; one that reads more
+        of them is preferred, see coverage)."""
         if not langs or "*" in self.languages:
             return True
-        return all(l in self.languages for l in langs)
+        return any(l in self.languages for l in langs)
+
+    def coverage(self, langs: list[str]) -> float:
+        """The share of the languages this engine reads (1.0: all of them, or no languages asked for)."""
+        if not langs or "*" in self.languages:
+            return 1.0
+        return sum(1 for l in langs if l in self.languages) / len(langs)
 
     def to_dict(self) -> dict:
         d = self.__dict__.copy()

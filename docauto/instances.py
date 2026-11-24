@@ -530,6 +530,6 @@ def find_label_for_value(doc, value: Any) -> Optional[str]:
                 label = line.text[:idx].strip(" :：#-\t")
                 if not label and i > 0:
                     label = p.lines[i - 1].text.strip(" :：#-\t")
-                if 2 <= len(label) <= 40 and re.search(r"[A-Za-z؀-ۿ]", label):
+                if 2 <= len(label) <= 40 and re.search(r"[^\W\d_]", label):
                     return label
     return None

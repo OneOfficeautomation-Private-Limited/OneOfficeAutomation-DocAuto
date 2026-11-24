@@ -70,10 +70,17 @@ DEFAULTS = [
     {"key": "DOCAUTO_PRICES", "label": "Own prices per 1,000 pages", "type": "text", "default": "", "allowEmpty": True,
      "help": "Contract prices that replace list prices: engine.ocr=price or engine.extract=price, separated by ; "
              "(e.g. azure-di.ocr=1.2; claude-haiku-5-5.extract=0.6). Also prices engines or models with no list price."},
+    {"key": "DOCAUTO_DATE_ORDER", "label": "Dates written with numbers only are", "type": "select",
+     "options": ["DMY", "MDY", "YMD"], "default": "DMY",
+     "help": "DMY: day first (14/11/2026), MDY: month first (11/14/2026, as in the US), YMD: year first. "
+             "A document type may set its own."},
+    {"key": "DOCAUTO_DECIMAL_MARK", "label": "Decimal mark in amounts", "type": "select", "options": ["auto", ".", ","],
+     "default": "auto", "help": "auto: worked out from each number. Set it when 1.234 must mean one thousand two "
+                                "hundred and thirty-four (\",\") or one point two three four (\".\"). A document type may set its own."},
     {"key": "DOCAUTO_TEACH_MAX_SAMPLES", "label": "Most example files for Teach from samples", "type": "number",
      "default": "5", "help": "More examples find more fields; each is read once (local engines: free)."},
     {"key": "DOCAUTO_OFFERED_LANGUAGES", "label": "Languages offered for document types", "type": "text",
-     "default": "en,ar", "help": "Language codes, comma separated (en, ar, ur, hi, fr, zh...). People choose a "
+     "default": "", "allowEmpty": True, "help": "Empty: every language the OCR engines here can read. Or language codes, comma separated (en, ar, ur, hi, fr, zh...). People choose a "
                                  "document type's languages from these; GET /df/languages lists what the OCR "
                                  "engines here can read."},
 ]

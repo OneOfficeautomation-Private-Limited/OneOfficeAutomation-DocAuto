@@ -22,7 +22,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "storage": {"data_dir": "./data", "retention_days": 30, "database_url": None, "schema_prefix": None,
                 "key_file": None, "tenant": "default"},
     "privacy": {"mask_pii": True},
-    "languages": {"offered": "en,ar"},   # offered for document types (docauto.languages)
+    "languages": {"offered": ""},   # offered for document types; empty: what the OCR engines read (docauto.languages)
     "options_dir": None,
 }
 

@@ -63,7 +63,9 @@ class Router:
         fallback_ids = self.config.get("fallback", {}).get("on_error", []) or []
 
         def rank(p: RegisteredProvider):
+            # the default engine first; then engines that read more of the languages; then the cheaper
             return (0 if p.info.id == default_id else 1,
+                    -p.info.coverage(languages),
                     p.info.cost(capabilities),
                     p.info.tier)
 

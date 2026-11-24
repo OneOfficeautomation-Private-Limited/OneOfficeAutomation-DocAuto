@@ -278,3 +278,43 @@ def test_residency_region_groups():
     assert region_matches("me-central2", "ksa") and region_matches("uaenorth", "uae") and region_matches("centralindia", "india")
     assert region_matches("eastus2", "us") and not region_matches("westeurope", "us") and not region_matches("eastus", "eu")
     assert region_matches("westeurope", "westeurope") and region_matches("westeurope", "west*")
+
+
+# ------------------------------------------------------------------ languages, numbers and dates
+def test_numbers_and_dates_of_many_countries(monkeypatch):
+    from docauto.extraction import LOCALE, coerce
+    monkeypatch.delenv("DOCAUTO_DATE_ORDER", raising=False)
+    monkeypatch.delenv("DOCAUTO_DECIMAL_MARK", raising=False)
+    for text, want in [("1,234.50", 1234.5), ("1.234,50", 1234.5), ("1'234.50", 1234.5), ("1 234,5", 1234.5),
+                       ("(1,234.00)", -1234.0), ("1.234,00-", -1234.0), ("١٢٣٫٤٥", 123.45), ("१२३४", 1234.0)]:
+        assert coerce(text, "currency") == (want, True), text
+    for text, want in [("15. März 2026", "2026-03-15"), ("3 de noviembre de 2026", "2026-11-03"), ("2026年10月15日", "2026-10-15"),
+                       ("2026년 10월 15일", "2026-10-15"), ("15 مارس 2026", "2026-03-15"), ("March 3, 2026", "2026-03-03"),
+                       ("03/04/26", "2026-04-03")]:
+        assert coerce(text, "date") == (want, True), text
+    monkeypatch.setenv("DOCAUTO_DATE_ORDER", "MDY")
+    assert coerce("03/04/2026", "date") == ("2026-03-04", True)
+    monkeypatch.setenv("DOCAUTO_DECIMAL_MARK", ",")
+    assert coerce("12.345", "currency") == (12345.0, True)
+    token = LOCALE.set({"dateOrder": "DMY", "decimalMark": "."})   # a document type's own wins over the server's
+    try:
+        assert coerce("03/04/2026", "date") == ("2026-04-03", True) and coerce("12.345", "currency") == (12.345, True)
+    finally:
+        LOCALE.reset(token)
+
+
+def test_scripts_and_directions():
+    from docauto.normalize import detect_direction, detect_language
+    assert (detect_language("שלום עולם"), detect_direction("שלום עולם")) == ("he", "rtl")
+    assert detect_language("Привет мир") == "ru" and detect_language("東京タワー") == "ja" and detect_language("नमस्ते") == "hi"
+    assert detect_language("مرحبا") == "ar" and detect_direction("Hello") == "ltr"
+
+
+def test_company_headings_and_engine_languages():
+    from docauto.grounding import as_number
+    from docauto.provider import ProviderInfo
+    assert as_number("¥12,000") == 12000.0 and as_number("CHF 1'250.00") == 1250.0 and as_number("INV-2026") is None
+    info = ProviderInfo.__new__(ProviderInfo)
+    info.languages = ["en", "ar"]
+    assert info.supports_languages(["en", "fr"]) and info.coverage(["en", "fr"]) == 0.5
+    assert not info.supports_languages(["ja"])

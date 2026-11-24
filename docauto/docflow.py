@@ -177,7 +177,9 @@ class DocType(BaseModel):
     name: str
     description: str = ""
     category: str = "custom"           # invoice | purchase_order | receipt | bank_statement | id_document | custom
-    languages: list[str] = Field(default_factory=lambda: ["en", "ar"])
+    languages: list[str] = Field(default_factory=list)   # empty: the languages offered on this server
+    dateOrder: Optional[str] = None     # DMY | MDY | YMD: how numeric dates of this type are read (None: server setting)
+    decimalMark: Optional[str] = None   # "." | ",": the decimal mark of this type's amounts (None: server setting)
     keywords: list[str] = Field(default_factory=list)   # words that identify this type on a page
     fields: list[FieldDef] = Field(default_factory=list)
     checks: list[str] = Field(default_factory=list)     # cross-field expressions
@@ -311,7 +313,7 @@ LINE_ITEMS = _f("line_items", "table", "Line items", columns=[
     _f("amount", "currency", "Amount", aliases=["Line Total", "Net Amount", "Total", "Betrag", "Montant", "Importe", "Valor",
                                                  "Importo", "Bedrag", "المبلغ", "الإجمالي", "金额", "金額", "राशि"])])
 
-from .words import CURRENCIES, TAX_ID_WORDS, TAX_WORDS  # noqa: E402  (word lists shared with instances)
+from .words import CURRENCIES, ISO_CURRENCIES, TAX_ID_WORDS, TAX_WORDS  # noqa: E402  (word lists shared with instances)
 
 def _cur(name="currency"):
     d = _f(name, "enum", "Currency", aliases=["Currency Code", "Währung", "Devise", "Moneda", "Moeda", "Valuta", "العملة",
@@ -721,7 +723,8 @@ def extract_pages(data: bytes, mime: str, pages: list[int]) -> tuple[bytes, str]
 
 
 # ================================================================== teach from samples
-_LABEL_VALUE = re.compile(r"^\s*([A-Za-z؀-ۿ][A-Za-z؀-ۿ0-9 .%#/()'&-]{1,38}?)\s*[:：]\s*(.+?)\s*$")
+# "Label: value" in any script: a label starts with a letter and has letters, digits and a few signs
+_LABEL_VALUE = re.compile(r"^\s*([^\W\d_][\w .%#/()'&-]{1,38}?)\s*[:：]\s*(.+?)\s*$")
 
 
 def infer_type(values: list[str]) -> str:
@@ -730,10 +733,10 @@ def infer_type(values: list[str]) -> str:
         return "string"
     if all(coerce(v, "date")[1] and re.search(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}", v) for v in vals):
         return "date"
-    cur = r"(?:SAR|USD|AED|EUR|GBP|\$|€|£|ر\.س)"
+    cur = r"(?:\b(?:" + "|".join(ISO_CURRENCIES) + r")\b|R\$|Rs\.?|[$€£¥₹﷼₩₺₽₪₫₦₱฿]|ر\.س|kr|zł|Kč|CHF)"
     if all(re.fullmatch(cur + r"?\s*-?\d[\d,]*(\.\d+)?\s*" + cur + "?", v.strip()) for v in vals):
         has_dec = any(re.search(r"[.,]\d{2}\b", v) for v in vals)
-        return "currency" if has_dec or any(re.search(r"SAR|USD|AED|EUR|ر\.س", v) for v in vals) else "number"
+        return "currency" if has_dec or any(re.search(cur, v) for v in vals) else "number"
     return "string"
 
 
@@ -872,6 +875,11 @@ class DocFlowService:
                     f.fallback, changed = want, True
             if changed:
                 self.save_doctype(dt)
+
+    def offered_languages(self) -> list[str]:
+        """The languages a document type with none of its own is read in: those offered on this server."""
+        from . import languages as langs
+        return langs.offered(self.svc.config, self.svc.registry)
 
     def _upgrade_global(self) -> None:
         """Once (DocFlow 3.3): built-in types seeded with Saudi-only defaults become global. Only values still exactly
@@ -1066,7 +1074,8 @@ class DocFlowService:
                     f"{json.dumps(c['corrected'], ensure_ascii=False)}" for c in recent)
         return ProcessOptions(
             ocrProvider=fl.engine.ocrProvider, extractionProvider=fl.engine.extractionProvider,
-            languages=(dt.languages if dt else None) or ["en", "ar"], capabilities=fl.engine.capabilities or ["ocr_printed"],
+            dateOrder=dt.dateOrder if dt else None, decimalMark=dt.decimalMark if dt else None,
+            languages=(dt.languages if dt else None) or self.offered_languages(), capabilities=fl.engine.capabilities or ["ocr_printed"],
             schema=dt.schema() if dt else None, instanceId=fl.id, instanceVersion=fl.version, source=source,
             doctypeId=dt.id if dt else None, fieldThreshold=fl.review.fieldConfidence,
             docThreshold=fl.review.documentConfidence, fieldThresholds=fl.review.fieldThresholds,
@@ -1511,7 +1520,7 @@ class DocFlowService:
             raise InvalidInput("upload 1 to 3 sample documents")
         results = []
         for data, name in files[:teach_max_samples()]:
-            results.append(self.svc.process_bytes(data, name, ProcessOptions(languages=["en", "ar"])))
+            results.append(self.svc.process_bytes(data, name, ProcessOptions(languages=self.offered_languages())))
         proposal = suggest_from_results(results)
         llm = next((p for p in self.svc.registry.available("extraction")
                     if p.info.optionPack == "tier3_ai" and self.svc.policy.allows(p.info)

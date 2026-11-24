@@ -5,14 +5,16 @@ Document types store short language codes ("en", "ar", ...). Each OCR engine nam
 engine can read on this server comes from the engine itself (Tesseract: its installed language data, as
 `tesseract --list-langs` lists it; PaddleOCR: its supported set, models download on first use).
 
-The administrator chooses the languages offered when people set up a document type (DOCAUTO_OFFERED_LANGUAGES,
-default en,ar): a short list keeps the choice simple, and languages that are not installed are shown as such.
+The administrator chooses the languages offered when people set up a document type (DOCAUTO_OFFERED_LANGUAGES):
+a short list keeps the choice simple, and languages that are not installed are shown as such. Not set, the offered
+languages are the ones the OCR engines on this server can read (English when none says), so an install reads what
+its own language data covers, in any country.
 """
 from __future__ import annotations
 
 from typing import Iterable, Optional
 
-DEFAULT_OFFERED = ("en", "ar")
+DEFAULT_OFFERED = ("en",)
 
 # code, name, Tesseract code, PaddleOCR code (None: that engine does not read it)
 TABLE: list[tuple[str, str, Optional[str], Optional[str]]] = [
@@ -69,9 +71,14 @@ def parse(value: object) -> list[str]:
     return out or list(DEFAULT_OFFERED)
 
 
-def offered(config: dict) -> list[str]:
-    """The administrator's list (DOCAUTO_OFFERED_LANGUAGES, through config languages.offered)."""
-    return parse((config.get("languages") or {}).get("offered"))
+def offered(config: dict, registry=None) -> list[str]:
+    """The administrator's list (DOCAUTO_OFFERED_LANGUAGES, through config languages.offered); not set: the
+    languages the OCR engines here read (English first), else English."""
+    chosen = (config.get("languages") or {}).get("offered")
+    if str(chosen or "").strip() or registry is None:
+        return parse(chosen)
+    have = sorted(available(registry), key=lambda c: (c != "en", name(c)))
+    return have or list(DEFAULT_OFFERED)
 
 
 def available(registry) -> dict[str, list[str]]:
@@ -95,7 +102,7 @@ def describe(config: dict, registry) -> list[dict]:
     """Every language the screens may show: the offered ones first (in the administrator's order), then the others
     the engines can read, then the rest of the table. installed: at least one engine here can read it."""
     have = available(registry)
-    chosen = offered(config)
+    chosen = offered(config, registry)
     rest = sorted((c for c in have if c not in chosen), key=name)
     others = sorted((c for c in NAMES if c not in chosen and c not in have), key=name)
     return [{"code": c, "name": name(c), "engines": have.get(c, []), "installed": c in have, "offered": c in chosen}

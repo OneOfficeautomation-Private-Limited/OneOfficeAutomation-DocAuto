@@ -17,11 +17,91 @@ from typing import Any, Optional
 from .models import Classification, DocumentResult, ExtractedField, FieldDef, FieldSchema, Line, Page
 from .provider import Capability, ExtractionProvider, ExtractRequest, ProviderInfo
 
-_NUM = re.compile(r"[-+]?\d[\d,\s]*(?:[.,]\d+)*")
+_NUM = re.compile(r"[-+(]?\d[\d,\s'’\u00a0\u202f]*(?:[.,]\d+)*\)?-?")
 _DIGIT_GAP = re.compile(r"(?<=\d) (?=\d)")
 _AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
-_DATE_FORMATS = ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y/%m/%d",
-                 "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y"]
+
+
+def ascii_digits(s: str) -> str:
+    """Digits of any script (Arabic-Indic, Persian, Devanagari, Bengali, Thai, full-width...) as 0-9."""
+    import unicodedata
+    return "".join(str(unicodedata.digit(c)) if c.isdigit() and not ("0" <= c <= "9") and unicodedata.digit(c, None) is not None
+                   else c for c in s)
+
+
+# month names in many languages (lower case, without the final dot) -> month number, for dates written with words
+_MONTHS: dict[str, int] = {}
+for _i, _names in enumerate([
+    "january jan januar janvier enero ene janeiro gennaio gen januari ocak styczeń stycznia leden január januar",
+    "february feb februar février fevrier febrero febr fevereiro fev febbraio februari şubat luty lutego únor február",
+    "march mar märz mars marzo março marco maart mart marzec marca březen március",
+    "april apr avril abril aprile april nisan kwiecień kwietnia duben április",
+    "may mai mayo maio maggio mei mayıs maj května május",
+    "june jun juni juin junio junho giugno haziran czerwiec czerwca červen június",
+    "july jul juli juillet julio julho luglio temmuz lipiec lipca červenec július",
+    "august aug august août aout agosto agosto augustus ağustos sierpień sierpnia srpen augusztus",
+    "september sep sept september septembre septiembre setembro settembre eylül wrzesień września září szeptember",
+    "october oct oktober octobre octubre outubro ottobre oktober ekim październik października říjen október",
+    "november nov november novembre noviembre novembro novembre kasım listopad listopada november",
+    "december dec dezember décembre decembre diciembre dic dezembro dez dicembre december aralık grudzień grudnia prosinec december",
+]):
+    for _n in _names.split():
+        _MONTHS.setdefault(_n, _i + 1)
+_ARABIC_MONTHS = {"يناير": 1, "كانون الثاني": 1, "فبراير": 2, "شباط": 2, "مارس": 3, "آذار": 3, "أبريل": 4, "ابريل": 4,
+                  "نيسان": 4, "مايو": 5, "أيار": 5, "يونيو": 6, "حزيران": 6, "يوليو": 7, "تموز": 7, "أغسطس": 8, "آب": 8,
+                  "سبتمبر": 9, "أيلول": 9, "أكتوبر": 10, "اكتوبر": 10, "تشرين الأول": 10, "نوفمبر": 11,
+                  "تشرين الثاني": 11, "ديسمبر": 12, "كانون الأول": 12}
+
+
+# the document being read: its document type's own date order and decimal mark (set by the pipeline for the time
+# one document is processed; empty: the server's settings)
+LOCALE: "contextvars.ContextVar[dict]" = __import__("contextvars").ContextVar("docauto_locale", default={})
+
+
+def _date_order() -> str:
+    """How a date with numbers only (03/04/2026) is read when both readings are possible: the document type's
+    dateOrder, else DOCAUTO_DATE_ORDER: DMY (day first, the default), MDY (month first, as in the US) or YMD.
+    A field's own format always wins."""
+    import os
+    v = (LOCALE.get().get("dateOrder") or os.environ.get("DOCAUTO_DATE_ORDER") or "DMY").strip().upper()
+    return v if v in ("DMY", "MDY", "YMD") else "DMY"
+
+
+def _words_date(v: str) -> Optional[str]:
+    """A date written with a month name in any of the languages above, a CJK date (2026年10月15日) or a Korean one
+    (2026년 10월 15일), as YYYY-MM-DD; None when it is none of these."""
+    m = re.search(r"(\d{4})\s*[年년]\s*(\d{1,2})\s*[月월]\s*(\d{1,2})\s*[日일]?", v)
+    if m:
+        y, mo, d = map(int, m.groups())
+        return f"{y:04d}-{mo:02d}-{d:02d}" if 1 <= mo <= 12 and 1 <= d <= 31 else None
+    low = v.lower().replace(".", " ").replace(",", " ")
+    for name, mo in _ARABIC_MONTHS.items():
+        if name in v:
+            nums = re.findall(r"\d{1,4}", v)
+            days = [int(n) for n in nums if len(n) <= 2]
+            years = [int(n) for n in nums if len(n) == 4]
+            if days and years and 1 <= days[0] <= 31:
+                return f"{years[0]:04d}-{mo:02d}-{days[0]:02d}"
+    m = re.search(r"(\d{1,2})\s*(?:de\s+)?([^\W\d_]{3,})\s*(?:de\s+)?(\d{4})", low) or None
+    if m and m.group(2) in _MONTHS:
+        return f"{int(m.group(3)):04d}-{_MONTHS[m.group(2)]:02d}-{int(m.group(1)):02d}" if 1 <= int(m.group(1)) <= 31 else None
+    m = re.search(r"([^\W\d_]{3,})\s+(\d{1,2})\s+(\d{4})", low)
+    if m and m.group(1) in _MONTHS and 1 <= int(m.group(2)) <= 31:
+        return f"{int(m.group(3)):04d}-{_MONTHS[m.group(1)]:02d}-{int(m.group(2)):02d}"
+    return None
+_DATE_FORMATS = ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y/%m/%d", "%Y.%m.%d",
+                 "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y", "%d/%m/%y", "%m/%d/%y", "%d.%m.%y", "%d-%m-%y"]
+
+
+def _date_formats() -> list[str]:
+    """The numeric date formats in the order DOCAUTO_DATE_ORDER asks (month first moves US formats ahead)."""
+    order = _date_order()
+    if order == "MDY":
+        return ["%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%m.%d.%Y", "%Y/%m/%d", "%b %d, %Y", "%B %d, %Y", "%d %b %Y",
+                "%d %B %Y", "%m/%d/%y", "%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y"]
+    if order == "YMD":
+        return ["%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%y/%m/%d", "%y-%m-%d"] + [f for f in _DATE_FORMATS if not f.startswith("%Y")]
+    return _DATE_FORMATS
 
 
 def _to_float(s: str) -> float:
@@ -31,10 +111,32 @@ def _to_float(s: str) -> float:
     mark, unless it is followed by exactly three digits and every separator is the same
     (1,234,567). A single '.' is decimal; a single ',' before three digits is thousands.
     """
-    s = s.replace(" ", "").rstrip(",.")
+    s = re.sub(r"[\s'’\u00a0\u202f]", "", s).rstrip(",.")
+    neg = False
+    if s.startswith("(") and s.endswith(")"):          # (1,234.00): a negative amount in accounting style
+        s, neg = s[1:-1], True
+    elif s.endswith("-") and not s.startswith("-"):    # 1.234,00-: a trailing minus
+        s, neg = s[:-1], True
+    s = s.strip("()")
+    value = _to_float_plain(s)
+    return -value if neg else value
+
+
+def _decimal_mark() -> str:
+    """DOCAUTO_DECIMAL_MARK: auto (worked out from the number), "." or ",": a single separator before three digits
+    (1.234 / 1,234) is a decimal mark or a thousands one by this setting."""
+    import os
+    v = (LOCALE.get().get("decimalMark") or os.environ.get("DOCAUTO_DECIMAL_MARK") or "auto").strip().lower()
+    return v if v in (".", ",") else "auto"
+
+
+def _to_float_plain(s: str) -> float:
     seps = [i for i, ch in enumerate(s) if ch in ".,"]
     if not seps:
         return float(s)
+    mark = _decimal_mark()
+    if mark != "auto" and len(seps) == 1:
+        return float(s.replace(mark, ".")) if s[seps[0]] == mark else float(s.replace(s[seps[0]], ""))
     last, tail = seps[-1], len(s) - seps[-1] - 1
     if len(seps) == 1:
         return float(s.replace(",", "") if s[last] == "," and tail == 3 else s.replace(",", "."))
@@ -45,7 +147,7 @@ def _to_float(s: str) -> float:
 
 def coerce(value: str, ftype: str, fmt: Optional[str] = None) -> tuple[Any, bool]:
     """Return (typed value, ok)."""
-    v = (value or "").strip().translate(_AR_DIGITS)
+    v = ascii_digits((value or "").strip().translate(_AR_DIGITS)).replace("٫", ".").replace("٬", ",")
     if ftype in ("number", "currency"):
         m = _NUM.search(v)
         if not m:
@@ -57,7 +159,11 @@ def coerce(value: str, ftype: str, fmt: Optional[str] = None) -> tuple[Any, bool
     if ftype == "date":
         token = re.search(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}|\d{1,2}\s+\w+\s+\d{4}|\w+\s+\d{1,2},\s*\d{4}", v)
         cand = token.group(0) if token else v
-        for f in ([fmt] if fmt else []) + _DATE_FORMATS:
+        if not fmt and not re.fullmatch(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}", cand):
+            words = _words_date(v)        # month names in many languages, CJK and Korean dates
+            if words:
+                return words, True
+        for f in ([fmt] if fmt else []) + _date_formats():
             try:
                 py_fmt = _py_date_format(f)
                 return datetime.strptime(cand, py_fmt).date().isoformat(), True
@@ -158,11 +264,20 @@ def span_confidence(page: Page, line: Line, start: int, end: int) -> Optional[fl
 # the company name printed at the top of a page (FieldDef.fallback = "header_company")
 _COMPANY = re.compile(r"(?i)(?<![\w])(?:llc|l\.l\.c\.?|ltd\.?|limited|co\.?|company|corp\.?|corporation|inc\.?|est\.?|"
                       r"establishment|trading|group|holding|industries|enterprises|gmbh|plc|llp|w\.?l\.?l\.?|fze|fzco|"
-                      r"pvt\.?)(?![\w])|شركة|مؤسسة|مجموعة|المحدودة|للتجارة")
+                      r"pvt\.?|s\.a\.?|s\.a\.s\.?|sas|sarl|s\.l\.?|s\.r\.l\.?|srl|s\.p\.a\.?|spa|ag|kg|ohg|b\.v\.?|bv|n\.v\.?|"
+                      r"nv|oy|oyj|ab|a/s|aps|asa|k\.k\.?|pte\.?|pty\.?|sdn\.?\s?bhd\.?|bhd\.?|ltda\.?|s\.?\s?de\s?r\.?l\.?|"
+                      r"sp\.\s?z\s?o\.?o\.?|s\.r\.o\.?|kft\.?|zrt\.?|a\.ş\.?|tbk\.?)(?![\w])|"
+                      r"شركة|مؤسسة|مجموعة|المحدودة|للتجارة|株式会社|有限会社|合同会社|有限公司|股份有限公司|주식회사|ООО|ОАО|ПАО|АО|ЗАО")
 _TITLE = re.compile(r"(?i)\b(?:tax\s+)?invoice\b|\breceipt\b|\bpurchase\s+order\b|\bcredit\s+note\b|\bdebit\s+note\b|"
-                    r"\bquotation\b|\bstatement\b|\bdelivery\s+note\b|فاتورة|إيصال|ايصال|أمر\s+شراء|إشعار")
+                    r"\bquotation\b|\bstatement\b|\bdelivery\s+note\b|\brechnung\b|\bgutschrift\b|\bquittung\b|"
+                    r"\blieferschein\b|\bbestellung\b|\bfacture\b|\bavoir\b|\bre[çc]u\b|\bbon\s+de\s+(?:commande|livraison)\b|"
+                    r"\bfactura\b|\brecibo\b|\balbar[aá]n\b|\bfatura\b|\bnota\s+fiscal\b|\bfattura\b|\bricevuta\b|"
+                    r"\bfactuur\b|\bfaktura\b|\bсчет\b|\bсчёт\b|\bнакладная\b|فاتورة|إيصال|ايصال|أمر\s+شراء|إشعار|"
+                    r"发票|收据|請求書|領収書|納品書|청구서|영수증|चालान|रसीद")
 _NOT_NAME = re.compile(r"(?i)@|www\.|https?:|\.com\b|\b(?:tel|phone|fax|mobile|e-?mail|p\.?\s?o\.?\s?box|street|st\.|road|"
-                       r"rd\.|building|floor|district|city|vat|trn|page)\b|هاتف|جوال|ص\.?\s?ب|شارع|الرقم الضريبي|سجل")
+                       r"rd\.|building|floor|district|city|vat|trn|page|telefon|t[ée]l[ée]phone|tel[ée]fono|telefone|"
+                       r"stra(?:ß|ss)e|rue|calle|rua|via|ust|tva|iva|btw|gst|seite|página|pagina|iban)\b|"
+                       r"هاتف|جوال|ص\.?\s?ب|شارع|الرقم الضريبي|سجل|电话|電話|地址|住所|전화|телефон|улица")
 HEADER_TOP = 0.3          # the company line sits in the top 30% of page 1
 HEADER_CONFIDENCE = 0.75  # at most: a guess from layout, so a person checks it unless e-invoice data confirms it
 
@@ -259,7 +374,7 @@ class RulesExtractor(ExtractionProvider):
             if fuzzy and line.text[:start].strip(" :#-\t") and not re.match(r"\s*[:：]", rest):
                 continue
             colon = re.search(r"[:：]", rest)
-            if colon and re.search(r"[A-Za-z\u0600-\u06FF]{2,}", rest[:colon.start()]):
+            if colon and re.search(r"[^\W\d_]{2,}", rest[:colon.start()]):
                 continue  # the printed label is longer ("Supplier VAT No:" is not "Supplier:")
             after = rest.lstrip(" :：#-\t")
             if f.type in ("currency", "number"):   # "VAT 15%: 150.00", "GST (18%) 90.00": the amount, not the rate
@@ -370,7 +485,8 @@ def header_company(doc: DocumentResult) -> Optional[tuple[Page, Line]]:
                 break           # the issuer's name is printed above the document title
             continue
         letters, digits = sum(ch.isalpha() for ch in t), sum(ch.isdigit() for ch in t)
-        if (letters < 3 or digits > 2 or letters < 0.6 * len(t.replace(" ", "")) or len(t.split()) > 8
+        # a heading name: mostly letters, a few digits allowed ("3M", "7-Eleven", "Studio 54"), up to 12 words
+        if (letters < 2 or digits > 4 or letters < 0.5 * len(t.replace(" ", "")) or len(t.split()) > 12
                 or _NOT_NAME.search(t)):
             continue
         cands.append(l)

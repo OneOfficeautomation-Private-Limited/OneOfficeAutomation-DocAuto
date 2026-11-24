@@ -24,10 +24,13 @@ from .normalize import union_bbox
 HALLUCINATION = "value not found in OCR text (possible hallucination)"
 FUZZY = 0.88          # text similarity accepted as the same value (OCR slips), for values of 5+ characters
 MAX_CONFIDENCE = 0.99
+from .words import ISO_CURRENCIES  # noqa: E402
 _SEPARATORS = str.maketrans({"٫": ".", "٬": ",", "،": ",", " ": " ", " ": " "})
-_CUR = r"(?:SAR|AED|USD|EUR|GBP|INR|QAR|KWD|BHD|OMR|EGP|JOD|Rs\.?|ر\.?س\.?|ريال|د\.?إ\.?|[$€£₹﷼])"
+# a currency next to an amount: any 3-letter ISO code, common local signs, or any Unicode currency symbol (Sc)
+_CUR = (r"(?:" + "|".join(ISO_CURRENCIES) + r"|Rs\.?|R\$|S/\.?|Kč|zł|kr\.?|Fr\.?|CHF|ر\.?س\.?|ريال|د\.?إ\.?|"
+        r"[$€£¥₹﷼₩₺₽₪₫₦₱฿₴₸₵₡₲₭₮₼₾])")
 _CURRENCY = re.compile(rf"(?i)^{_CUR}\s*|\s*{_CUR}$")
-_NUMBER = re.compile(r"[-+]?\d[\d,.\s]*\d|\d")
+_NUMBER = re.compile(r"[-+]?\d[\d,.\s'’]*\d|\d")   # 1'250.00: Swiss thousands apostrophes too
 _INNER_NUMBER = re.compile(r"\d[\d,.]*\d|\d")
 _EDGE = " :;,()[]{}*#|\"'"
 

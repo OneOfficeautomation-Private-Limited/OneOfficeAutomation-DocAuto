@@ -91,6 +91,8 @@ class ProcessOptions(BaseModel):
     fieldThresholds: dict[str, float] = Field(default_factory=dict)   # per field name, over fieldThreshold
     einvoiceFirst: bool = True            # e-invoice XML replaces OCR; e-invoice QR codes check the fields
     einvoiceStandards: list[str] = Field(default_factory=list)   # which (einvoice.STANDARDS ids); empty = every one
+    dateOrder: Optional[str] = None        # DMY | MDY | YMD for numeric dates; None: the server's DOCAUTO_DATE_ORDER
+    decimalMark: Optional[str] = None      # "." | "," | auto; None: the server's DOCAUTO_DECIMAL_MARK
     instructions: Optional[str] = None    # extra guidance for AI extractors (e.g. learned corrections)
     doctypeId: Optional[str] = None       # DocFlow document type
     parentId: Optional[str] = None        # set on documents split out of a batch
@@ -374,6 +376,14 @@ class DocumentService:
                 opt.docThreshold if opt.docThreshold is not None else self.doc_threshold)
 
     def _process(self, job_id: str, doc_id: str, opt: ProcessOptions) -> DocumentResult:
+        from .extraction import LOCALE
+        token = LOCALE.set({k: v for k, v in (("dateOrder", opt.dateOrder), ("decimalMark", opt.decimalMark)) if v})
+        try:
+            return self._process_doc(job_id, doc_id, opt)
+        finally:
+            LOCALE.reset(token)
+
+    def _process_doc(self, job_id: str, doc_id: str, opt: ProcessOptions) -> DocumentResult:
         data, file_name, mime = self.store.file_bytes(doc_id)
         schema = opt.schema_ or (self.store.get_schema(opt.schemaId) if opt.schemaId else None)
         if opt.schemaId and schema is None:
