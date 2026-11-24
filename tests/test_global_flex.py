@@ -252,3 +252,29 @@ def test_date_and_pattern_checks():
     assert date_problem((today - timedelta(days=400)).isoformat(), {"notOlderThanDays": 365}) == "is more than 365 days ago"
     assert date_problem(today.isoformat(), {"notFuture": True, "notOlderThanDays": 30}) is None
     assert date_problem("not a date", {"notFuture": True}) == "is not a date"
+
+
+# ------------------------------------------------------------------ personal data of every country
+def test_personal_data_kinds_and_own_patterns(monkeypatch):
+    from docauto import pii
+    monkeypatch.delenv("DOCAUTO_PII_PATTERNS", raising=False)
+    monkeypatch.setenv("DOCAUTO_PII_EXTRA", "EMPLOYEE=EMP-\d{6}")
+    m = pii.PiiMasker()
+    text = ("Card 4111 1111 1111 1111, SSN 123-45-6789, NINO AB 12 34 56 C, Emirates ID 784-1990-1234567-1, "
+            "Aadhaar 2345 6789 0123, staff EMP-004512, ref 4111111111111112")
+    out = m.mask(text)
+    for secret in ("4111 1111 1111 1111", "123-45-6789", "AB 12 34 56 C", "784-1990-1234567-1", "2345 6789 0123", "EMP-004512"):
+        assert secret not in out, secret
+    assert "4111111111111112" in out             # fails the card checksum: not a card, kept
+    assert m.unmask(out) == text
+    monkeypatch.setenv("DOCAUTO_PII_PATTERNS", "email")
+    monkeypatch.setenv("DOCAUTO_PII_EXTRA", "")
+    assert pii.PiiMasker().mask("SSN 123-45-6789 a@b.co") == "SSN 123-45-6789 [EMAIL_1]"
+
+
+def test_residency_region_groups():
+    from docauto.policy import region_matches
+    assert region_matches("westeurope", "eu") and region_matches("europe-west3", "eu") and region_matches("eu-central-1", "eu")
+    assert region_matches("me-central2", "ksa") and region_matches("uaenorth", "uae") and region_matches("centralindia", "india")
+    assert region_matches("eastus2", "us") and not region_matches("westeurope", "us") and not region_matches("eastus", "eu")
+    assert region_matches("westeurope", "westeurope") and region_matches("westeurope", "west*")

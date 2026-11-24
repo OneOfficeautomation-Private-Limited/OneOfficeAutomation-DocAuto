@@ -54,9 +54,15 @@ DEFAULTS = [
      "help": "Fields below this confidence go to the Validation Station."},
     {"key": "DOCAUTO_DOC_THRESHOLD", "label": "Document review threshold (0-1)", "type": "number", "default": "0.80"},
     {"key": "DOCAUTO_MASK_PII", "label": "Mask personal data before cloud AI", "type": "bool", "default": "true",
-     "help": "National ID / Iqama numbers, IBANs, phone numbers and e-mails are replaced by placeholders before text "
+     "help": "E-mails, IBANs, card numbers, phone numbers and national ids are replaced by placeholders before text "
              "goes to a cloud AI model, and restored in the results. Page images cannot be masked: with this on they "
              "are only sent when a process allows images. Local engines are never masked."},
+    {"key": "DOCAUTO_PII_PATTERNS", "label": "Kinds of personal data to mask", "type": "text", "default": "",
+     "allowEmpty": True,
+     "help": "Empty: every kind. Or a list of: email, iban, card, phone, sa-id, ae-id, in-aadhaar, in-pan, us-ssn, "
+             "uk-nino, cn-id, br-cpf, za-id."},
+    {"key": "DOCAUTO_PII_EXTRA", "label": "Own personal data patterns", "type": "text", "default": "", "allowEmpty": True,
+     "help": "More kinds to mask, as NAME=pattern separated by ; (e.g. EMPLOYEE=EMP-\\d{6}; NHS=\\d{3} \\d{3} \\d{4})."},
     {"key": "DOCAUTO_PRICE_CURRENCY", "label": "Currency for prices and cost estimates", "type": "text", "default": "USD",
      "help": "An ISO currency code (USD, EUR, INR, SAR, JPY...). List prices are in US dollars and converted at the rate below."},
     {"key": "DOCAUTO_PRICE_RATE", "label": "1 US dollar in that currency", "type": "number", "default": "1",
