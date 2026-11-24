@@ -355,3 +355,26 @@ def test_accuracy_from_reviewed_documents(monkeypatch):
     assert a["measured"] > 0 and len(a["levels"]) == 9 and all(0 <= (x["wrongPassed"] or 0) <= 1 for x in a["levels"])
     res = c.get(f"/api/docs/v1/documents/{doc}/result").json()
     assert "Reviewer note: number fixed" in res["warnings"]
+
+
+def test_monthly_budget_switches_to_local_engines(monkeypatch):
+    from tests.conftest import make_config
+    from docauto.docflow import DocFlowService, Flow
+    from docauto.pipeline import DocumentService
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    monkeypatch.delenv("DOCAUTO_PRICES", raising=False)
+    monkeypatch.delenv("DOCAUTO_PRICE_RATE", raising=False)
+    svc = DocumentService(make_config())
+    df = DocFlowService(svc)
+    fl = df.save_flow(Flow(name="Budgeted", docTypes=["invoice"]), new=True)
+    ids = svc.submit(b"%PDF-1.4 x", "a.pdf", __import__("docauto.pipeline", fromlist=["x"]).ProcessOptions(), wait=False)
+    svc.store.set_doc_meta(ids["documentId"], fl.id, 1, "upload")
+    svc.store.record_usage(tenant_id="t", job_id="j", document_id=ids["documentId"], provider_id="azure-di", option_pack="tier2_cloud",
+                           capability="document_ocr", pages=2000, credits=0, runs_locally=False, regions=[])
+    assert df.month_spend(fl.id) == 3.0            # 2,000 pages at 1.50 per 1,000
+    assert not df.over_budget(fl)                  # no budget: no limit
+    fl.engine.monthlyBudget = 2.5
+    assert df.over_budget(fl) and df._options(fl, df.doctype("invoice"), "upload").localOnly
+    fl.engine.extractionByType = {"invoice": "claude"}
+    assert df._options(fl, df.doctype("invoice"), "upload").extractionProvider == "claude"
+    svc.close()

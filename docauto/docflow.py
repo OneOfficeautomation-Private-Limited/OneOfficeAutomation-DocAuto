@@ -219,6 +219,11 @@ class EngineChoice(BaseModel):
     # Page images cannot be masked: with masking on they are only sent when allowImages is true.
     maskPii: Optional[bool] = None
     allowImages: bool = False
+    # most to spend on cloud and AI engines in a calendar month (in the price currency, docauto.costs); once reached,
+    # the process reads with the engines on this server until the month ends. None = no limit
+    monthlyBudget: Optional[float] = None
+    # an engine per document type of the process (doc type id -> extraction engine id); others use extractionProvider
+    extractionByType: dict[str, str] = Field(default_factory=dict)
 
 
 class ClassifySettings(BaseModel):
@@ -1130,7 +1135,9 @@ class DocFlowService:
                     f"- {c['field']}: extracted {json.dumps(c['original'], ensure_ascii=False)}, corrected to "
                     f"{json.dumps(c['corrected'], ensure_ascii=False)}" for c in recent)
         return ProcessOptions(
-            ocrProvider=fl.engine.ocrProvider, extractionProvider=fl.engine.extractionProvider,
+            ocrProvider=fl.engine.ocrProvider,
+            extractionProvider=(fl.engine.extractionByType.get(dt.id) if dt else None) or fl.engine.extractionProvider,
+            localOnly=self.over_budget(fl),
             dateOrder=dt.dateOrder if dt else None, decimalMark=dt.decimalMark if dt else None,
             languages=(dt.languages if dt else None) or self.offered_languages(), capabilities=fl.engine.capabilities or ["ocr_printed"],
             schema=dt.schema() if dt else None, instanceId=fl.id, instanceVersion=fl.version, source=source,
@@ -1302,6 +1309,30 @@ class DocFlowService:
         rv = fl.review if fl else ReviewSettings()
         return _merge_reasons(_flag_reasons(flags), review_reasons(res, dt.schema(), rv.fieldConfidence,
                                                                    rv.documentConfidence, rv.fieldThresholds))
+
+    def month_spend(self, flow_id: str) -> float:
+        """What the process's documents cost this calendar month on cloud and AI engines, in the price currency
+        (pages at each engine's price: an estimate, not the vendor's bill)."""
+        from . import costs as costs_mod
+        start = datetime.now(timezone.utc).strftime("%Y-%m-01")
+        rows = self.store._all("SELECT u.provider_id, u.capability, u.model, SUM(u.pages) AS pages FROM usage u "
+                               "JOIN documents d ON d.id = u.document_id WHERE d.instance_id=? AND u.runs_locally=0 "
+                               "AND u.ts >= ? GROUP BY u.provider_id, u.capability, u.model", (flow_id, start))
+        total = 0.0
+        for r in rows:
+            use = "extract" if str(r["capability"] or "").startswith(("extract", "classify")) else "ocr"
+            price = costs_mod.price_per_1000(r["provider_id"], use, r["model"]) or 0.0
+            total += (r["pages"] or 0) * price / 1000
+        return round(total, 2)
+
+    def over_budget(self, fl: Flow) -> bool:
+        if fl.engine.monthlyBudget is None:
+            return False
+        try:
+            return self.month_spend(fl.id) >= fl.engine.monthlyBudget
+        except Exception:   # the spend cannot be worked out: the process keeps its engines
+            log.exception("monthly spend of %s", fl.id)
+            return False
 
     def accuracy(self, flow_id: str, limit: int = 500) -> dict:
         """How well a process reads, from its own reviewed documents: per field how often reviewers changed the value,

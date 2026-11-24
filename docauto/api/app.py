@@ -687,6 +687,16 @@ async def df_upload(flow_id: str, files: list[UploadFile] = File(...), wait: boo
     return {"documents": out}
 
 
+@app.get(f"{DF}/flows/{{flow_id}}/spend")
+def df_flow_spend(flow_id: str, _: str = Depends(auth)):
+    """This month's estimated spend on cloud and AI engines, the process's budget, and whether it reads locally now."""
+    from .. import costs as costs_mod
+    df = docflow()
+    fl = df.flow(flow_id)
+    return {"spend": df.month_spend(flow_id), "budget": fl.engine.monthlyBudget, "currency": costs_mod.currency(),
+            "localOnly": df.over_budget(fl)}
+
+
 @app.get(f"{DF}/flows/{{flow_id}}/accuracy")
 def df_flow_accuracy(flow_id: str, limit: int = Query(500, ge=10, le=5000), _: str = Depends(auth)):
     """How well a process reads, from its reviewed documents (per field corrections, straight-through share, and

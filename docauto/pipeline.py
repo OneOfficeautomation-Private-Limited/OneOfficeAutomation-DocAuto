@@ -91,6 +91,7 @@ class ProcessOptions(BaseModel):
     fieldThresholds: dict[str, float] = Field(default_factory=dict)   # per field name, over fieldThreshold
     einvoiceFirst: bool = True            # e-invoice XML replaces OCR; e-invoice QR codes check the fields
     einvoiceStandards: list[str] = Field(default_factory=list)   # which (einvoice.STANDARDS ids); empty = every one
+    localOnly: bool = False                # only engines that run on this server (a process over its monthly budget)
     dateOrder: Optional[str] = None        # DMY | MDY | YMD for numeric dates; None: the server's DOCAUTO_DATE_ORDER
     decimalMark: Optional[str] = None      # "." | "," | auto; None: the server's DOCAUTO_DECIMAL_MARK
     instructions: Optional[str] = None    # extra guidance for AI extractors (e.g. learned corrections)
@@ -411,9 +412,10 @@ class DocumentService:
         if opt.useTextLayer and all_native and opt.ocrProvider in ("auto", "pdf-text"):
             cands = [self.registry.get("pdf-text")]
         else:
-            cands = [c for c in self.router.candidates("ocr", caps, opt.languages, opt.ocrProvider, "document_ocr",
-                                                       strict=opt.strictProvider)
-                     if c.info.id != "pdf-text"]
+            cands = [c for c in self.router.candidates("ocr", caps, opt.languages,
+                                                       "auto" if opt.localOnly else opt.ocrProvider, "document_ocr",
+                                                       strict=opt.strictProvider and not opt.localOnly)
+                     if c.info.id != "pdf-text" and (c.info.runsLocally or not opt.localOnly)]
             if not cands:
                 raise UnsupportedCapability("no OCR engine left to run (pdf-text only reads digital PDFs)")
         req = RecognizeRequest(document_id=doc_id, pages=ing.images, languages=opt.languages, capabilities=caps,
@@ -468,7 +470,8 @@ class DocumentService:
 
         # 2) CLASSIFY ---------------------------------------------------------
         if opt.classifyLabels:
-            ex = self.router.candidates("extraction", [Capability.CLASSIFY], [], opt.extractionProvider, "extraction")
+            ex = [p for p in self.router.candidates("extraction", [Capability.CLASSIFY], [], opt.extractionProvider, "extraction")
+                  if p.info.runsLocally or not opt.localOnly]
             cls, att = self.router.run(ex, lambda p: p.instance.classify(
                 pii.PiiMasker().mask_document(result) if self._masks(p, opt) else result, opt.classifyLabels))
             result.classification = cls
@@ -477,8 +480,10 @@ class DocumentService:
 
         # 3) EXTRACT -> GROUND -> QR CHECK -> (ESCALATE) -----------------------
         if schema:
-            ex = self.router.candidates("extraction", [Capability.EXTRACT_SCHEMA], [], opt.extractionProvider,
-                                        "extraction", strict=opt.strictProvider)
+            ex = [p for p in self.router.candidates("extraction", [Capability.EXTRACT_SCHEMA], [],
+                                                    "auto" if opt.localOnly else opt.extractionProvider,
+                                                    "extraction", strict=opt.strictProvider and not opt.localOnly)
+                  if p.info.runsLocally or not opt.localOnly]
             ereq = ExtractRequest(document=result, schema=schema, images=ing.images, instructions=opt.instructions)
             t1 = time.time()
             fields, att = self.router.run(ex, lambda p: self._extract(p, ereq, opt))
@@ -635,6 +640,8 @@ class DocumentService:
         if not threshold:
             return
         for step in self.retry_chain(used, opt.languages):
+            if opt.localOnly and step.get("provider") is not None and not step["provider"].info.runsLocally:
+                continue   # over budget: no cloud engine re-reads weak pages
             weak = [i for i, pg in enumerate(result.pages) if (c := _page_confidence(pg)) is not None and c < threshold]
             if not weak:
                 return
