@@ -1354,7 +1354,7 @@ class DocFlowService:
                 fl = self.flow(row["instance_id"])
             except InvalidInput:
                 return
-            platform = ({"success": "processed", "validation": "needs_review"} if event == "processed" else
+            platform = ({"success": "processed", "validation": "needs_review", "failed": "failed"} if event == "processed" else
                         {"validated": "approved", "invalid": "rejected"} if event == "validated" else {}).get(status)
             if platform:
                 self._event(platform, doc_id, fl, status)
@@ -1404,6 +1404,11 @@ class DocFlowService:
             dv = item["payload"]["delivery"]
             self.store.delivery_log(item["flow_id"], item["document_id"], dv.get("name") or dv["type"], dv["type"],
                                     True, detail)
+            if dv["type"] != "start_bot":   # a delivery done: agents may go on from there ("Delivery done" trigger)
+                try:
+                    self._event("delivered", item["document_id"], self.flow(item["flow_id"]), item["payload"].get("status"))
+                except InvalidInput:
+                    pass
 
     def _outbox_failed(self, item: dict, detail: str) -> None:
         """After the last attempt: the delivery log says so and the Command Center hears "delivery_failed"."""
@@ -1529,6 +1534,13 @@ class DocFlowService:
                 f = self.store.file_bytes(doc_id)
                 if f:   # the original, decrypted: the folder is the customer's own output
                     (folder / f"{stem}_{doc_id[:8]}{Path(f[1]).suffix}").write_bytes(f[0])
+                    if dv.params.get("searchablePdf") and not f[1].lower().endswith(".xml"):
+                        # a PDF whose text can be searched and copied (the page images with the text read under them)
+                        try:
+                            pdf = self.svc.searchable_pdf(f[0], f[1], self.offered_languages())
+                            (folder / f"{stem}_{doc_id[:8]}_searchable.pdf").write_bytes(pdf)
+                        except DocAutoError as e:   # no engine makes searchable PDFs here: the rest is delivered
+                            log.warning("searchable PDF for %s not made: %s", doc_id, e)
                 if status in ("validated", "invalid"):
                     for p in (Path(dv.params["path"]) / "validation").glob(f"{stem}_{doc_id[:8]}*"):
                         p.unlink(missing_ok=True)

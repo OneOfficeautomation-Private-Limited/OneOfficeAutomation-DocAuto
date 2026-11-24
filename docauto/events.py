@@ -28,7 +28,7 @@ from urllib.parse import quote
 import httpx
 
 log = logging.getLogger("docauto.events")
-EVENTS = ("processed", "needs_review", "approved", "rejected", "delivery_failed", "review_overdue")
+EVENTS = ("processed", "needs_review", "approved", "rejected", "delivery_failed", "review_overdue", "failed", "delivered")
 PATH = "/api/docflow-callback/events"
 RETRIES = 3            # emit(): attempts after the first one
 BACKOFF = 2.0          # emit(): seconds, doubled after each failed attempt
