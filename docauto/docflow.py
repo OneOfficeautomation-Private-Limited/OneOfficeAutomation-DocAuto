@@ -78,6 +78,94 @@ def _snake(label: str) -> str:
     return s if s and (s[0].isalpha() or s[0] == "_") else ""
 
 
+# ================================================================== tax and date checks
+# tax presets: rates a country uses and the format of its tax id. A "tax" check takes a preset and/or its own values;
+# empty rates = no rate check (mixed-rate invoices), empty idPattern = no format check.
+TAX_PRESETS: dict[str, dict[str, Any]] = {
+    "ksa": {"name": "Saudi Arabia VAT", "rates": [0.15], "idPattern": r"3\d{13}3"},
+    "uae": {"name": "UAE VAT", "rates": [0.05], "idPattern": r"\d{15}"},
+    "bahrain": {"name": "Bahrain VAT", "rates": [0.10], "idPattern": r"\d{15}"},
+    "oman": {"name": "Oman VAT", "rates": [0.05], "idPattern": r"OM\d{10}"},
+    "india-gst": {"name": "India GST", "rates": [0.05, 0.12, 0.18, 0.28, 0.0],
+                  "idPattern": r"\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]"},
+    "uk": {"name": "United Kingdom VAT", "rates": [0.20, 0.05, 0.0], "idPattern": r"GB(\d{9}|\d{12}|GD\d{3}|HA\d{3})"},
+    "eu": {"name": "EU VAT (any member state, standard and reduced rates)", "rates": [],
+           "idPattern": r"(AT|BE|BG|CY|CZ|DE|DK|EE|EL|ES|FI|FR|HR|HU|IE|IT|LT|LU|LV|MT|NL|PL|PT|RO|SE|SI|SK|XI)[0-9A-Z+*]{2,12}"},
+    "germany": {"name": "Germany VAT", "rates": [0.19, 0.07, 0.0], "idPattern": r"DE\d{9}"},
+    "france": {"name": "France VAT", "rates": [0.20, 0.10, 0.055, 0.021, 0.0], "idPattern": r"FR[0-9A-Z]{2}\d{9}"},
+    "australia": {"name": "Australia GST", "rates": [0.10, 0.0], "idPattern": r"\d{11}"},
+    "new-zealand": {"name": "New Zealand GST", "rates": [0.15, 0.0], "idPattern": r"\d{8,9}"},
+    "singapore": {"name": "Singapore GST", "rates": [0.09, 0.0], "idPattern": r"([MT]\d{8}[A-Z]|\d{9}[A-Z]|\d{8}[A-Z])"},
+    "canada": {"name": "Canada GST/HST", "rates": [0.05, 0.13, 0.15, 0.0], "idPattern": r"\d{9}(RT\d{4})?"},
+    "japan": {"name": "Japan consumption tax", "rates": [0.10, 0.08], "idPattern": r"T\d{13}"},
+    "custom": {"name": "Own rates and format", "rates": [], "idPattern": ""},
+}
+
+
+def _rates(v) -> list[float]:
+    """Rates as fractions from a list or text ("15, 5" or "0.15"): numbers over 1 are percentages."""
+    items = v if isinstance(v, list) else re.split(r"[,;\s]+", str(v or ""))
+    out = []
+    for x in items:
+        try:
+            f = float(str(x).strip().rstrip("%"))
+        except ValueError:
+            continue
+        out.append(f / 100 if f > 1 else f)
+    return out
+
+
+def tax_problems(p: dict, vals: dict) -> list[tuple[str, str]]:
+    """What a tax check finds: [(field, message)]. p: preset, rates, idPattern, idField, subtotalField, taxField,
+    totalField, tolerance (absolute, default 0.05), tolerancePct (default 0.1 %)."""
+    pre = TAX_PRESETS.get(str(p.get("preset") or "custom"), TAX_PRESETS["custom"])
+    rates = _rates(p["rates"]) if p.get("rates") not in (None, "", []) else list(pre["rates"])
+    if "rate" in p and not p.get("rates"):          # ksa_vat processes saved before 3.3 had a single rate
+        rates = _rates([p["rate"]])
+    id_pattern = p.get("idPattern") if p.get("idPattern") is not None else pre["idPattern"]
+    idf = p.get("idField") or p.get("vatNumberField") or "supplier_vat"
+    sub = p.get("subtotalField", "subtotal")
+    tax = p.get("taxField") or p.get("vatField") or "vat_amount"
+    tot = p.get("totalField", "total")
+    tol_abs = float(p.get("tolerance", 0.05) or 0.05)
+    tol_pct = float(p.get("tolerancePct", 0.001) or 0.001)
+    out = []
+    num = lambda k: vals.get(k) if isinstance(vals.get(k), (int, float)) and not isinstance(vals.get(k), bool) else None
+    vn = re.sub(r"\s", "", str(vals.get(idf) or ""))
+    if vn and id_pattern and not re.fullmatch(id_pattern, vn):
+        out.append((idf, f"The tax id is not in the {pre['name']} format"))
+    s, t, total = num(sub), num(tax), num(tot)
+    if s is not None and t is not None and rates and s:
+        if not any(abs(round(s * r, 2) - t) <= max(tol_abs, s * tol_pct) for r in rates):
+            words = " or ".join(f"{r * 100:g}%" for r in rates)
+            out.append((tax, f"Tax {t:,.2f} is not {words} of subtotal {s:,.2f}"))
+    if s is not None and t is not None and total is not None:
+        if abs(s + t - total) > max(tol_abs, abs(total) * tol_pct):
+            out.append((tot, "Total does not equal subtotal + tax"))
+    return out
+
+
+def date_problem(v, p: dict) -> Optional[str]:
+    """A date check: notFuture, and notOlderThanDays / notLaterThanDays (from today). None when it passes."""
+    if v in (None, ""):
+        return None
+    try:
+        d = datetime.fromisoformat(str(v)[:10]).date()
+    except ValueError:
+        return "is not a date"
+    today = datetime.now(timezone.utc).date()
+    # a day of grace: a document dated today east of UTC is still tomorrow in UTC
+    if p.get("notFuture") and d > today + timedelta(days=1):
+        return "is in the future"
+    older = p.get("notOlderThanDays")
+    if older not in (None, "") and (today - d).days > int(older):
+        return f"is more than {int(older)} days ago"
+    later = p.get("notLaterThanDays")
+    if later not in (None, "") and (d - today).days > int(later):
+        return f"is more than {int(later)} days ahead"
+    return None
+
+
 # ================================================================== models
 class LearnedLabels(BaseModel):
     enabled: bool = True
@@ -147,7 +235,8 @@ class ReviewSettings(BaseModel):
 
 class Rule(BaseModel):
     id: str = ""
-    type: Literal["duplicate", "lookup", "ksa_vat", "threshold", "required", "expression"]
+    # ksa_vat is the "tax" check with the Saudi preset (kept for processes saved before 3.3)
+    type: Literal["duplicate", "lookup", "ksa_vat", "tax", "threshold", "required", "expression", "pattern", "date_range"]
     name: str = ""
     enabled: bool = True
     action: Literal["review", "reject", "warn"] = "review"
@@ -172,6 +261,7 @@ class Intake(BaseModel):
     # e-invoices first: a UBL XML (alone or inside a PDF/A-3) is read instead of OCR, and a ZATCA / India GST
     # QR code on the page cross-checks the extracted fields. Only acts when such data is found.
     einvoiceFirst: bool = True
+    einvoiceStandards: list[str] = Field(default_factory=list)   # e-invoice standards read (empty = every one)
 
 
 class Flow(BaseModel):
@@ -442,24 +532,27 @@ def run_rules(store, flow: Flow, doctype: Optional[DocType], doc_id: str, result
                                                         providerId=f"lookup:{table}")
                                     result.fields.append(nf)
                                     by[target] = nf
-            elif r.type == "ksa_vat":
-                vf = p.get("vatNumberField", "supplier_vat")
-                sub, vat, tot = p.get("subtotalField", "subtotal"), p.get("vatField", "vat_amount"), p.get("totalField", "total")
-                rate = float(p.get("rate", 0.15))
-                vn = str(vals.get(vf) or "")
-                if vn and not re.fullmatch(r"3\d{13}3", vn):
-                    flag(r, "VAT number must be 15 digits starting and ending with 3", vf)
-                if isinstance(vals.get(sub), (int, float)) and isinstance(vals.get(vat), (int, float)):
-                    if abs(round(vals[sub] * rate, 2) - vals[vat]) > max(0.05, vals[sub] * 0.001):
-                        flag(r, f"VAT {vals[vat]} is not {rate:.0%} of subtotal {vals[sub]}", vat)
-                if all(isinstance(vals.get(k), (int, float)) for k in (sub, vat, tot)):
-                    if abs(vals[sub] + vals[vat] - vals[tot]) > 0.05:
-                        flag(r, "Total does not equal subtotal + VAT", tot)
+            elif r.type in ("ksa_vat", "tax"):
+                for field, message in tax_problems(p if r.type == "tax" else {"preset": "ksa", **p}, vals):
+                    flag(r, message, field)
+            elif r.type == "pattern":
+                field, pattern = p.get("field"), str(p.get("pattern") or "")
+                v = vals.get(field)
+                if pattern and v not in (None, "") and not re.fullmatch(pattern, str(v).strip()):
+                    flag(r, p.get("message") or f"{field} '{v}' is not in the expected format", field)
+            elif r.type == "date_range":
+                field = p.get("field")
+                problem = date_problem(vals.get(field), p)
+                if problem:
+                    flag(r, p.get("message") or f"{field} {problem}", field)
             elif r.type == "threshold":
                 field, op, limit = p.get("field"), p.get("op", ">"), float(p.get("value", 0))
                 v = vals.get(field)
                 if isinstance(v, (int, float)):
-                    hit = {">": v > limit, ">=": v >= limit, "<": v < limit, "<=": v <= limit, "==": v == limit}.get(op, False)
+                    hi = float(p.get("value2", limit) or limit)
+                    hit = {">": v > limit, ">=": v >= limit, "<": v < limit, "<=": v <= limit, "==": v == limit,
+                           "!=": v != limit, "between": min(limit, hi) <= v <= max(limit, hi),
+                           "outside": not (min(limit, hi) <= v <= max(limit, hi))}.get(op, False)
                     if hit:
                         flag(r, p.get("message") or f"{field} {v:,.2f} {op} {limit:,.2f}", field)
             elif r.type == "required":
@@ -977,7 +1070,7 @@ class DocFlowService:
             schema=dt.schema() if dt else None, instanceId=fl.id, instanceVersion=fl.version, source=source,
             doctypeId=dt.id if dt else None, fieldThreshold=fl.review.fieldConfidence,
             docThreshold=fl.review.documentConfidence, fieldThresholds=fl.review.fieldThresholds,
-            einvoiceFirst=fl.intake.einvoiceFirst, instructions=instructions, maskPii=fl.engine.maskPii,
+            einvoiceFirst=fl.intake.einvoiceFirst, einvoiceStandards=fl.intake.einvoiceStandards, instructions=instructions, maskPii=fl.engine.maskPii,
             cloudImages=fl.engine.allowImages, **extra)
 
     def upload(self, flow_id: str, data: bytes, file_name: str, source: str = "upload", wait: bool = False,
@@ -1000,14 +1093,21 @@ class DocFlowService:
 
     @staticmethod
     def _einvoice_type(fl: Flow, types: list[DocType], data: bytes, file_name: str) -> Optional[DocType]:
-        """The process's invoice type when the file is an e-invoice (UBL XML, or a PDF carrying one)."""
-        if not fl.intake.einvoiceFirst or (fl.classify.mode == "single" and not file_name.lower().endswith(".xml")):
+        """The process's type for an e-invoice (XML, or a PDF carrying one): a credit note type for credit notes
+        when the process has one, else its invoice type; None when the file is no e-invoice."""
+        if not fl.intake.einvoiceFirst:
             return None
-        dt = next((t for t in types if t.category == "invoice" or t.id == "invoice"), None)
-        if dt is None:
+        accepts = [t for t in types if t.category in ("invoice", "credit_note") or t.id in ("invoice", "credit_note")]
+        if not accepts:
             return None
         from .preprocess import sniff_mime
-        return dt if einvoice.read_file(data, sniff_mime(data, file_name)) else None
+        inv = einvoice.read_file(data, sniff_mime(data, file_name), fl.intake.einvoiceStandards)
+        if not inv:
+            return None
+        credit = inv.get("raw", {}).get("documentType") == "CreditNote"
+        want = ("credit_note",) if credit else ("invoice",)
+        return next((t for t in accepts if t.category in want or t.id in want), None) or \
+            next((t for t in accepts if t.category == "invoice" or t.id == "invoice"), accepts[0])
 
     # ---------------------------------------------------------------- post-processing (inside the job)
     def _post_process(self, doc_id: str, result: DocumentResult, opt: ProcessOptions, status: str) -> Optional[str]:

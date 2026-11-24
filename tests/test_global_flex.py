@@ -166,3 +166,89 @@ def test_installs_with_the_old_saudi_defaults_are_upgraded_once(monkeypatch):
     assert dt.checks == [INVOICE_TOTAL_CHECK] and "discount" in by and "other_charges" in by
     assert df.doctype("other").name == "Other document"
     svc.close()
+
+
+# ------------------------------------------------------------------ e-invoice standards
+CII_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
+ xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
+ xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
+ <rsm:ExchangedDocumentContext><ram:GuidelineSpecifiedDocumentContextParameter><ram:ID>urn:cen.eu:en16931:2017</ram:ID></ram:GuidelineSpecifiedDocumentContextParameter></rsm:ExchangedDocumentContext>
+ <rsm:ExchangedDocument><ram:ID>RE-2026-118</ram:ID><ram:TypeCode>380</ram:TypeCode>
+  <ram:IssueDateTime><udt:DateTimeString format="102">20261103</udt:DateTimeString></ram:IssueDateTime></rsm:ExchangedDocument>
+ <rsm:SupplyChainTradeTransaction>
+  <ram:IncludedSupplyChainTradeLineItem>
+   <ram:SpecifiedTradeProduct><ram:Name>Beratung</ram:Name></ram:SpecifiedTradeProduct>
+   <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>100.00</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
+   <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="HUR">10</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
+   <ram:SpecifiedLineTradeSettlement><ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>1000.00</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation></ram:SpecifiedLineTradeSettlement>
+  </ram:IncludedSupplyChainTradeLineItem>
+  <ram:ApplicableHeaderTradeAgreement>
+   <ram:SellerTradeParty><ram:Name>Muster GmbH</ram:Name><ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">DE123456789</ram:ID></ram:SpecifiedTaxRegistration></ram:SellerTradeParty>
+   <ram:BuyerTradeParty><ram:Name>Kunde AG</ram:Name></ram:BuyerTradeParty>
+   <ram:BuyerOrderReferencedDocument><ram:IssuerAssignedID>PO-77</ram:IssuerAssignedID></ram:BuyerOrderReferencedDocument>
+  </ram:ApplicableHeaderTradeAgreement>
+  <ram:ApplicableHeaderTradeSettlement><ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
+   <ram:SpecifiedTradePaymentTerms><ram:DueDateDateTime><udt:DateTimeString format="102">20261203</udt:DateTimeString></ram:DueDateDateTime></ram:SpecifiedTradePaymentTerms>
+   <ram:SpecifiedTradeSettlementHeaderMonetarySummation><ram:TaxBasisTotalAmount>1000.00</ram:TaxBasisTotalAmount>
+    <ram:TaxTotalAmount currencyID="EUR">190.00</ram:TaxTotalAmount><ram:GrandTotalAmount>1190.00</ram:GrandTotalAmount>
+   </ram:SpecifiedTradeSettlementHeaderMonetarySummation></ram:ApplicableHeaderTradeSettlement>
+ </rsm:SupplyChainTradeTransaction>
+</rsm:CrossIndustryInvoice>"""
+
+
+def test_cii_e_invoices_are_read():
+    from docauto import einvoice
+    inv = einvoice.parse_xml(CII_XML)
+    v = inv["values"]
+    assert inv["raw"]["standard"] == "cii" and "Factur-X" in inv["standard"]
+    assert (v["invoice_number"], v["invoice_date"], v["due_date"]) == ("RE-2026-118", "2026-11-03", "2026-12-03")
+    assert (v["supplier_name"], v["supplier_vat"], v["customer_name"], v["po_number"]) == ("Muster GmbH", "DE123456789", "Kunde AG", "PO-77")
+    assert (v["currency"], v["subtotal"], v["vat_amount"], v["total"]) == ("EUR", 1000.0, 190.0, 1190.0)
+    assert v["line_items"] == [{"description": "Beratung", "quantity": 10.0, "unit_price": 100.0, "amount": 1000.0}]
+    assert einvoice.parse_xml(CII_XML, ["ubl"]) is None          # a process reading UBL only leaves it alone
+
+
+def test_payment_qr_codes_and_chosen_standards():
+    from docauto import einvoice
+    swiss = "\n".join(["SPC", "0200", "1", "CH4431999123000889012", "S", "Robert Schneider AG", "Rue du Lac", "1268",
+                       "2501", "Biel", "CH", "", "", "", "", "", "", "", "1949.75", "CHF", "S", "Pia-Maria Rutschmann",
+                       "Grosse Marktgasse", "28", "9400", "Rorschach", "CH", "QRR", "210000000003139471430009017",
+                       "Order of 15 June", "EPD"])
+    q = einvoice.parse_qr(swiss)
+    assert q["source"] == "swiss-qr" and q["values"]["total"] == 1949.75 and q["values"]["currency"] == "CHF"
+    assert q["values"]["supplier_name"] == "Robert Schneider AG" and q["values"]["iban"] == "CH4431999123000889012"
+    epc = "\n".join(["BCD", "002", "1", "SCT", "BPOTBEB1", "Red Cross Belgium", "BE72000000001616", "EUR12.30", "CHAR", "",
+                     "Urgency fund"])
+    q = einvoice.parse_qr(epc)
+    assert q["source"] == "epc-qr" and q["values"]["total"] == 12.3 and q["values"]["currency"] == "EUR"
+    assert einvoice.parse_qr(epc, ["zatca-qr", "gst-qr"]) is None   # not a standard the process reads
+    ids = {s["id"] for s in einvoice.standards()}
+    assert {"ubl", "cii", "zatca-qr", "gst-qr", "swiss-qr", "epc-qr"} <= ids
+
+
+# ------------------------------------------------------------------ checks for every country
+def test_tax_check_presets_and_own_rates():
+    from docauto.docflow import tax_problems
+    ok = {"supplier_vat": "300123456700003", "subtotal": 1000.0, "vat_amount": 150.0, "total": 1150.0}
+    assert tax_problems({"preset": "ksa"}, ok) == []
+    assert [f for f, _ in tax_problems({"preset": "ksa"}, {**ok, "supplier_vat": "123"})] == ["supplier_vat"]
+    de = {"supplier_vat": "DE123456789", "subtotal": 100.0, "vat_amount": 7.0, "total": 107.0}
+    assert tax_problems({"preset": "germany"}, de) == []                       # the reduced rate
+    assert [f for f, _ in tax_problems({"preset": "germany"}, {**de, "vat_amount": 10.0, "total": 110.0})] == ["vat_amount"]
+    assert tax_problems({"preset": "eu"}, {**de, "vat_amount": 21.0, "total": 121.0}) == []   # no rate list: any rate
+    gst = {"supplier_vat": "29ABCDE1234F1Z5", "subtotal": 1000.0, "vat_amount": 180.0, "total": 1180.0}
+    assert tax_problems({"preset": "india-gst"}, gst) == []
+    assert tax_problems({"preset": "custom", "rates": "8.1, 2.6", "idPattern": r"CHE-\d{3}\.\d{3}\.\d{3}"},
+                        {"supplier_vat": "CHE-123.456.789", "subtotal": 100.0, "vat_amount": 8.1, "total": 108.1}) == []
+    assert tax_problems({"preset": "ksa"}, {"subtotal": 1000.0, "total": 1150.0}) == []   # nothing to check
+
+
+def test_date_and_pattern_checks():
+    from datetime import date, timedelta
+    from docauto.docflow import date_problem
+    today = date.today()
+    assert date_problem((today + timedelta(days=3)).isoformat(), {"notFuture": True}) == "is in the future"
+    assert date_problem((today - timedelta(days=400)).isoformat(), {"notOlderThanDays": 365}) == "is more than 365 days ago"
+    assert date_problem(today.isoformat(), {"notFuture": True, "notOlderThanDays": 30}) is None
+    assert date_problem("not a date", {"notFuture": True}) == "is not a date"

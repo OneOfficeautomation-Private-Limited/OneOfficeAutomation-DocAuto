@@ -90,6 +90,7 @@ class ProcessOptions(BaseModel):
     docThreshold: Optional[float] = None
     fieldThresholds: dict[str, float] = Field(default_factory=dict)   # per field name, over fieldThreshold
     einvoiceFirst: bool = True            # e-invoice XML replaces OCR; e-invoice QR codes check the fields
+    einvoiceStandards: list[str] = Field(default_factory=list)   # which (einvoice.STANDARDS ids); empty = every one
     instructions: Optional[str] = None    # extra guidance for AI extractors (e.g. learned corrections)
     doctypeId: Optional[str] = None       # DocFlow document type
     parentId: Optional[str] = None        # set on documents split out of a batch
@@ -380,7 +381,7 @@ class DocumentService:
 
         # 0) E-INVOICE: the invoice's own XML (standalone or inside a PDF/A-3) replaces OCR and extraction
         if opt.einvoiceFirst and opt.role != "batch":
-            inv = einvoice.read_file(data, mime)
+            inv = einvoice.read_file(data, mime, opt.einvoiceStandards)
             if inv:
                 return self._process_einvoice(job_id, doc_id, data, file_name, mime, opt, schema, inv)
 
@@ -451,7 +452,7 @@ class DocumentService:
             for page, found in zip(result.pages, barcodes.read_pages(ing.images[:n])):
                 page.barcodes = found
             if schema and opt.einvoiceFirst:
-                qr = einvoice.find_qr([(p.pageNumber, p.barcodes) for p in result.pages])
+                qr = einvoice.find_qr([(p.pageNumber, p.barcodes) for p in result.pages], opt.einvoiceStandards)
 
         # 2) CLASSIFY ---------------------------------------------------------
         if opt.classifyLabels:

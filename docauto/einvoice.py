@@ -1,6 +1,9 @@
 """E-invoices: use the invoice's own data instead of (or to check) what was read from the page.
 
-* UBL 2.1 XML (the ZATCA e-invoice format in Saudi Arabia), uploaded on its own or embedded in a
+Every standard is in STANDARDS (one parser each); a process chooses which it reads (all by default).
+
+* UBL 2.1 XML (Peppol BIS, EN 16931, XRechnung UBL, ZATCA...) and UN/CEFACT CII XML (Factur-X, ZUGFeRD,
+  XRechnung CII), uploaded on their own or embedded in a
   PDF/A-3: the invoice fields come from the XML with confidence 1.0 (source "einvoice-xml") and no OCR
   runs. A PDF still has its pages rendered (and its text layer read, free) for the review screen.
 * QR codes on the page (docauto.barcodes): the ZATCA QR (base64 TLV: 1 seller name, 2 VAT number,
@@ -137,17 +140,18 @@ def pdf_attachments(data: bytes) -> list[tuple[str, bytes]]:
             pdf.close()
 
 
-def read_file(data: bytes, mime: str) -> Optional[dict]:
-    """The e-invoice XML of an uploaded file (standalone XML, or embedded in a PDF), or None."""
+def read_file(data: bytes, mime: str, wanted: Optional[list[str]] = None) -> Optional[dict]:
+    """The e-invoice XML of an uploaded file (standalone XML, or embedded in a PDF), by the standards wanted
+    (None or empty: every one), or None."""
     if mime in ("application/xml", "text/xml"):
-        inv = parse_ubl(data)
+        inv = parse_xml(data, wanted)
         if inv:
             inv["raw"]["container"] = "xml"
         return inv
     if mime == "application/pdf":
         for name, blob in pdf_attachments(data):
             if name.lower().endswith(".xml") or blob.lstrip(b"\xef\xbb\xbf \r\n\t").startswith(b"<"):
-                inv = parse_ubl(blob)
+                inv = parse_xml(blob, wanted)
                 if inv:
                     inv["raw"].update(container="pdf", attachment=name)
                     return inv
@@ -263,18 +267,160 @@ def parse_gst_qr(text: str) -> Optional[dict]:
     return {"source": GST_SOURCE, "values": {k: v for k, v in values.items() if v not in (None, "")}, "raw": data}
 
 
-def parse_qr(text: str) -> Optional[dict]:
-    return parse_zatca_qr(text) or parse_gst_qr(text)
+def parse_qr(text: str, wanted: Optional[list[str]] = None) -> Optional[dict]:
+    """The QR code's values by the first enabled QR standard that reads it, or None."""
+    for sid, parse in _enabled("qr", wanted):
+        qr = parse(text)
+        if qr:
+            qr["standard"] = STANDARDS[sid]["name"]
+            return qr
+    return None
 
 
-def find_qr(pages_codes: list[tuple[int, list[Barcode]]]) -> Optional[dict]:
+def find_qr(pages_codes: list[tuple[int, list[Barcode]]], wanted: Optional[list[str]] = None) -> Optional[dict]:
     """The first e-invoice QR among the codes found on the pages [(page number, codes)], with where it is."""
     for pno, codes in pages_codes:
         for c in codes:
-            qr = parse_qr(c.text)
+            qr = parse_qr(c.text, wanted)
             if qr:
                 qr.update(page=pno, bbox=c.bbox)
                 return qr
+    return None
+
+
+# ------------------------------------------------------------------ UN/CEFACT CII (Factur-X, ZUGFeRD, XRechnung CII)
+CII = {"rsm": "urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100",
+       "ram": "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100",
+       "udt": "urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100"}
+
+
+def _cii_date(s: Optional[str]) -> Optional[str]:
+    """CII dates are format 102 (YYYYMMDD); other formats are kept as written."""
+    if s and re.fullmatch(r"\d{8}", s):
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    return s
+
+
+def parse_cii(data: bytes) -> Optional[dict]:
+    """{"values", "raw"} from a UN/CEFACT Cross Industry Invoice (the XML inside Factur-X / ZUGFeRD PDFs and
+    XRechnung CII), or None."""
+    head = data[:4096].lstrip(b"\xef\xbb\xbf \t\r\n")
+    if not head.startswith(b"<") or b"<!DOCTYPE" in head.upper() or b"<!ENTITY" in data.upper():
+        return None
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        return None
+    if root.tag != "{%s}CrossIndustryInvoice" % CII["rsm"]:
+        return None
+
+    def t(path: str, node=root) -> Optional[str]:
+        v = node.findtext(path, namespaces=CII)
+        return v.strip() if v and v.strip() else None
+
+    tx = root.find("rsm:SupplyChainTradeTransaction", CII)
+    agr = tx.find("ram:ApplicableHeaderTradeAgreement", CII) if tx is not None else None
+    stl = tx.find("ram:ApplicableHeaderTradeSettlement", CII) if tx is not None else None
+
+    def party(tag: str) -> tuple[Optional[str], Optional[str]]:
+        p = agr.find(f"ram:{tag}", CII) if agr is not None else None
+        if p is None:
+            return None, None
+        tax = None
+        for reg in p.findall("ram:SpecifiedTaxRegistration/ram:ID", CII):
+            if reg.text and (tax is None or reg.get("schemeID") == "VA"):
+                tax = reg.text.strip()
+        return t("ram:Name", p), tax
+
+    sup_name, sup_vat = party("SellerTradeParty")
+    cus_name, cus_vat = party("BuyerTradeParty")
+    sums = stl.find("ram:SpecifiedTradeSettlementHeaderMonetarySummation", CII) if stl is not None else None
+    s = (lambda name: _num(t(f"ram:{name}", sums)) if sums is not None else None)
+    rows = []
+    for ln in (tx.findall("ram:IncludedSupplyChainTradeLineItem", CII) if tx is not None else []):
+        rows.append({k: v for k, v in {
+            "description": t("ram:SpecifiedTradeProduct/ram:Name", ln),
+            "quantity": _num(t("ram:SpecifiedLineTradeDelivery/ram:BilledQuantity", ln)),
+            "unit_price": _num(t("ram:SpecifiedLineTradeAgreement/ram:NetPriceProductTradePrice/ram:ChargeAmount", ln)),
+            "amount": _num(t("ram:SpecifiedLineTradeSettlement/ram:SpecifiedTradeSettlementLineMonetarySummation/"
+                             "ram:LineTotalAmount", ln))}.items() if v is not None})
+    type_code = t("rsm:ExchangedDocument/ram:TypeCode")
+    values = {"invoice_number": t("rsm:ExchangedDocument/ram:ID"),
+              "invoice_date": _cii_date(t("rsm:ExchangedDocument/ram:IssueDateTime/udt:DateTimeString")),
+              "due_date": _cii_date(t("ram:SpecifiedTradePaymentTerms/ram:DueDateDateTime/udt:DateTimeString", stl))
+              if stl is not None else None,
+              "supplier_name": sup_name, "supplier_vat": sup_vat, "customer_name": cus_name, "customer_vat": cus_vat,
+              "po_number": t("ram:BuyerOrderReferencedDocument/ram:IssuerAssignedID", agr) if agr is not None else None,
+              "currency": t("ram:InvoiceCurrencyCode", stl) if stl is not None else None,
+              "subtotal": s("TaxBasisTotalAmount"), "vat_amount": s("TaxTotalAmount"),
+              "total": s("GrandTotalAmount") or s("DuePayableAmount"), "line_items": rows or None}
+    raw = {"documentType": "CreditNote" if type_code == "381" else "Invoice", "typeCode": type_code,
+           "profile": t("rsm:ExchangedDocumentContext/ram:GuidelineSpecifiedDocumentContextParameter/ram:ID")}
+    return {"values": {k: v for k, v in values.items() if v is not None}, "raw": {k: v for k, v in raw.items() if v}}
+
+
+# ------------------------------------------------------------------ payment QR codes (Swiss QR-bill, SEPA / EPC)
+SWISS_SOURCE = "swiss-qr"
+EPC_SOURCE = "epc-qr"
+
+
+def parse_swiss_qr(text: str) -> Optional[dict]:
+    """Swiss QR-bill (SPC, version 02xx): the creditor, IBAN, amount, currency, debtor and reference."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    if len(lines) < 31 or lines[0] != "SPC" or not lines[1].startswith("02"):
+        return None
+    amount = as_number(lines[18]) if lines[18].strip() else None
+    values = {"supplier_name": lines[5].strip() or None, "iban": lines[3].strip() or None, "total": amount,
+              "currency": lines[19].strip() or None, "customer_name": lines[21].strip() or None,
+              "payment_reference": lines[28].strip() or None}
+    return {"source": SWISS_SOURCE, "values": {k: v for k, v in values.items() if v not in (None, "")},
+            "raw": {"referenceType": lines[27], "message": lines[29] if len(lines) > 29 else ""}}
+
+
+def parse_epc_qr(text: str) -> Optional[dict]:
+    """SEPA credit transfer QR (EPC069-12, "GiroCode"): beneficiary, IBAN, amount in EUR, reference."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    if len(lines) < 7 or lines[0] != "BCD" or lines[3] != "SCT":
+        return None
+    amt = lines[7] if len(lines) > 7 else ""
+    m = re.fullmatch(r"([A-Z]{3})([\d.]+)", amt.strip())
+    values = {"supplier_name": lines[5].strip() or None, "iban": lines[6].strip() or None,
+              "total": float(m.group(2)) if m else None, "currency": m.group(1) if m else None,
+              "payment_reference": (lines[9].strip() if len(lines) > 9 else "") or (lines[10].strip() if len(lines) > 10 else "") or None}
+    return {"source": EPC_SOURCE, "values": {k: v for k, v in values.items() if v not in (None, "")},
+            "raw": {"bic": lines[4].strip()}}
+
+
+# ------------------------------------------------------------------ the standards a process may read
+# id -> what it is; kind "xml" replaces reading the page, kind "qr" checks what was read. A process lists the ones it
+# reads (Intake.einvoiceStandards); an empty list reads every one. New standards are added here, one parser each.
+STANDARDS: dict[str, dict] = {
+    "ubl": {"name": "UBL 2.1 XML (Peppol, EN 16931, XRechnung UBL, ZATCA, and others)", "kind": "xml", "parse": parse_ubl},
+    "cii": {"name": "CII XML (Factur-X, ZUGFeRD, XRechnung CII)", "kind": "xml", "parse": parse_cii},
+    "zatca-qr": {"name": "Saudi Arabia ZATCA QR code", "kind": "qr", "parse": parse_zatca_qr},
+    "gst-qr": {"name": "India GST e-invoice QR code", "kind": "qr", "parse": parse_gst_qr},
+    "swiss-qr": {"name": "Swiss QR-bill", "kind": "qr", "parse": parse_swiss_qr},
+    "epc-qr": {"name": "SEPA payment QR code (EPC, GiroCode)", "kind": "qr", "parse": parse_epc_qr},
+}
+
+
+def standards() -> list[dict]:
+    """The standards DocFlow reads, for the screens: id, name, kind."""
+    return [{"id": k, "name": v["name"], "kind": v["kind"]} for k, v in STANDARDS.items()]
+
+
+def _enabled(kind: str, wanted: Optional[list[str]]) -> list[tuple[str, Any]]:
+    return [(k, v["parse"]) for k, v in STANDARDS.items() if v["kind"] == kind and (not wanted or k in wanted)]
+
+
+def parse_xml(data: bytes, wanted: Optional[list[str]] = None) -> Optional[dict]:
+    """The e-invoice in an XML file, by the first enabled XML standard that reads it, or None."""
+    for sid, parse in _enabled("xml", wanted):
+        inv = parse(data)
+        if inv:
+            inv["raw"]["standard"] = sid
+            inv["standard"] = STANDARDS[sid]["name"]
+            return inv
     return None
 
 
@@ -340,6 +486,7 @@ def cross_check(doc: DocumentResult, qr: dict, schema: Optional[FieldSchema]) ->
             fld.validation.passed = False
             fld.confidence = min(fld.confidence if fld.confidence is not None else 0.5, 0.5)
             checks.append({"field": target, "qr": qv, "read": fld.value, "result": "mismatch"})
-    doc.einvoice = {"source": src, "page": qr.get("page"), "bbox": qr["bbox"].model_dump() if qr.get("bbox") else None,
+    doc.einvoice = {"source": src, "standard": qr.get("standard"), "page": qr.get("page"),
+                    "bbox": qr["bbox"].model_dump() if qr.get("bbox") else None,
                     "values": qr["values"], "raw": qr.get("raw"), "checks": checks}
     return checks

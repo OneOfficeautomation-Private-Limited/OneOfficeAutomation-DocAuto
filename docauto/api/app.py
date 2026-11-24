@@ -527,6 +527,20 @@ def _stop_docflow():
 
 
 # ---- doc types
+@app.get(f"{DF}/tax-presets")
+def df_tax_presets(_: str = Depends(auth)):
+    """Tax check presets: a country's rates and tax id format (own values can be added to any check)."""
+    from ..docflow import TAX_PRESETS
+    return [{"id": k, **v} for k, v in TAX_PRESETS.items()]
+
+
+@app.get(f"{DF}/einvoice-standards")
+def df_einvoice_standards(_: str = Depends(auth)):
+    """The e-invoice standards DocFlow reads (XML that replaces reading the page, QR codes that check it)."""
+    from .. import einvoice as einv
+    return einv.standards()
+
+
 @app.get(f"{DF}/library")
 def df_library(_: str = Depends(auth)):
     return library()
