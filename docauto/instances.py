@@ -16,6 +16,7 @@ recent corrections to AI extractors as guidance.
 """
 from __future__ import annotations
 
+from .words import CURRENCIES
 import csv
 import io
 import json
@@ -121,18 +122,17 @@ TEMPLATES: dict[str, dict[str, Any]] = {
             _f("invoice_date", "date", "Invoice Date / تاريخ الفاتورة", True, ["Date", "Issue Date"]),
             _f("due_date", "date", "Due Date / تاريخ الاستحقاق"),
             _f("supplier_name", label="Supplier / المورد", aliases=["Vendor", "Seller", "From"]),
-            _f("supplier_vat", label="Supplier VAT No / الرقم الضريبي", aliases=["VAT Number", "VAT No", "TRN"],
-               regex=r"3\d{14}"),
+            _f("supplier_vat", label="Supplier VAT No / الرقم الضريبي", aliases=["VAT Number", "VAT No", "TRN"]),
             _f("customer_name", label="Customer / العميل", aliases=["Bill To", "Buyer"]),
             _f("subtotal", "currency", "Subtotal / المجموع الفرعي", True, ["Sub Total", "Net Amount"]),
             _f("vat_amount", "currency", "VAT / ضريبة القيمة المضافة", False, ["VAT 15%", "Tax", "VAT Amount"]),
             _f("total", "currency", "Total / الإجمالي", True, ["Total Amount", "Grand Total", "Amount Due"]),
-            _f("currency", "enum", "Currency / العملة", enum=["SAR", "AED", "USD", "EUR", "GBP"]),
+            _f("currency", "enum", "Currency / العملة", enum=CURRENCIES),
             _f("line_items", "table", "Line items", columns=[
                 _f("description", label="Description"), _f("quantity", "number", "Qty"),
                 _f("unit_price", "currency", "Unit Price"), _f("amount", "currency", "Amount")]),
         ],
-        "validation": ["abs(subtotal + vat_amount - total) < 0.05"],
+        "validation": ["abs(value_or(subtotal, total - value_or(vat_amount, 0)) + value_or(vat_amount, 0) - total) <= max(0.05, abs(total) * 0.001)"],
     },
     "purchase_order": {
         "title": "Purchase orders", "description": "Purchase orders issued to vendors.",
@@ -155,7 +155,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
             _f("receipt_date", "date", "Date / التاريخ", True),
             _f("vat_amount", "currency", "VAT / الضريبة", aliases=["Tax"]),
             _f("total", "currency", "Total / الإجمالي", True, ["Amount", "Total Paid"]),
-            _f("payment_method", "enum", "Payment method", enum=["Cash", "Card", "Mada", "Apple Pay", "Other"]),
+            _f("payment_method", "enum", "Payment method", enum=["Cash", "Card", "Bank transfer", "Cheque", "Mobile wallet", "UPI", "Pix", "iDEAL", "Apple Pay", "Google Pay", "Mada", "Other"]),
         ],
         "validation": [],
     },
@@ -163,8 +163,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
         "title": "Bank statements", "description": "Account statements with balances and transactions.",
         "fields": [
             _f("bank_name", label="Bank / البنك"),
-            _f("account_number", label="IBAN / رقم الآيبان", required=True, aliases=["Account No", "IBAN"],
-               regex=r"SA\d{2}[A-Z0-9]{18}"),
+            _f("account_number", label="IBAN / رقم الآيبان", required=True, aliases=["Account No", "IBAN"]),
             _f("period_from", "date", "From / من"), _f("period_to", "date", "To / إلى"),
             _f("opening_balance", "currency", "Opening Balance / الرصيد الافتتاحي", True),
             _f("closing_balance", "currency", "Closing Balance / الرصيد الختامي", True),
@@ -179,8 +178,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
         "title": "ID documents", "description": "National ID / Iqama / passport data page.",
         "fields": [
             _f("full_name", label="Name / الاسم", required=True),
-            _f("id_number", label="ID Number / رقم الهوية", required=True, aliases=["Iqama No", "Passport No"],
-               regex=r"[12]\d{9}|[A-Z]\d{7,8}"),
+            _f("id_number", label="ID Number / رقم الهوية", required=True, aliases=["Iqama No", "Passport No"]),
             _f("nationality", label="Nationality / الجنسية"),
             _f("date_of_birth", "date", "Date of Birth / تاريخ الميلاد"),
             _f("expiry_date", "date", "Expiry Date / تاريخ الانتهاء", True),

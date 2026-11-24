@@ -169,7 +169,7 @@ def score(doc: DocumentResult, schema: FieldSchema | None, field_threshold: floa
                 continue
             names = _rule_names(rule)
             for fld in doc.fields:  # a passing consistency rule corroborates its fields
-                if fld.name in names and fld.confidence is not None and fld.validation.passed:
+                if fld.name in names and fld.confidence is not None and fld.validation.passed and not _empty(fld.value):
                     fld.confidence = round(max(fld.confidence, min(MAX_CONFIDENCE, fld.confidence + RULE_BOOST)), 4)
 
     # 3) document confidence

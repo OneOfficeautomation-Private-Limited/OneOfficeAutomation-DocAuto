@@ -203,69 +203,181 @@ def _f(name, type_="string", label=None, required=False, aliases=None, regex=Non
 
 
 LINE_ITEMS = _f("line_items", "table", "Line items", columns=[
-    _f("description", label="Description / الوصف", aliases=["Item", "Items", "Details", "Particulars", "البيان", "الصنف"]),
-    _f("quantity", "number", "Qty / الكمية", aliases=["Quantity", "Qty."]),
-    _f("unit_price", "currency", "Unit Price / سعر الوحدة", aliases=["Price", "Rate", "Unit Cost", "السعر"]),
-    _f("amount", "currency", "Amount / المبلغ", aliases=["Line Total", "Net Amount", "Total", "الإجمالي"])])
+    _f("description", label="Description", aliases=["Item", "Items", "Details", "Particulars", "Article", "Artikel", "Désignation",
+                                                     "Descripción", "Descrição", "Descrizione", "Omschrijving", "البيان", "الصنف",
+                                                     "品名", "摘要", "विवरण"]),
+    _f("quantity", "number", "Quantity", aliases=["Qty", "Qty.", "Menge", "Quantité", "Cantidad", "Quantidade", "Quantità",
+                                                   "Aantal", "الكمية", "数量", "मात्रा"]),
+    _f("unit_price", "currency", "Unit price", aliases=["Price", "Rate", "Unit Cost", "Einzelpreis", "Prix unitaire",
+                                                         "Precio unitario", "Preço unitário", "Prezzo unitario", "السعر", "单价", "単価", "दर"]),
+    _f("amount", "currency", "Amount", aliases=["Line Total", "Net Amount", "Total", "Betrag", "Montant", "Importe", "Valor",
+                                                 "Importo", "Bedrag", "المبلغ", "الإجمالي", "金额", "金額", "राशि"])])
+
+from .words import CURRENCIES, TAX_ID_WORDS, TAX_WORDS  # noqa: E402  (word lists shared with instances)
+
+def _cur(name="currency"):
+    d = _f(name, "enum", "Currency", aliases=["Currency Code", "Währung", "Devise", "Moneda", "Moeda", "Valuta", "العملة",
+                                               "币种", "通貨", "मुद्रा"], enum=CURRENCIES)
+    d["allowOther"] = True
+    return d
+
+
+# the invoice's amounts add up: subtotal - discount + other charges + tax = total, to a cent or 0.1% (a missing
+# subtotal, discount, charge or tax counts as nothing, so invoices without them pass)
+INVOICE_TOTAL_CHECK = ("abs(value_or(subtotal, total - value_or(vat_amount, 0)) - value_or(discount, 0) + value_or(other_charges, 0)"
+                       " + value_or(vat_amount, 0) - total) <= max(0.05, abs(total) * 0.001)")
+OLD_INVOICE_CHECK = "abs(subtotal + vat_amount - total) < 0.05"
 
 LIBRARY: dict[str, dict[str, Any]] = {
-    "invoice": {"name": "Invoice", "description": "Supplier / tax invoices (VAT), English and Arabic.",
-                "keywords": ["invoice", "tax invoice", "فاتورة", "فاتورة ضريبية", "VAT"],
+    "invoice": {"name": "Invoice", "description": "Bills from suppliers asking for payment: tax invoices, commercial invoices.",
+                "keywords": ["invoice", "tax invoice", "Rechnung", "facture", "factura", "fatura", "fattura", "factuur",
+                             "faktura", "فاتورة", "发票", "請求書", "चालान", "VAT", "GST"],
                 "fields": [
-                    _f("invoice_number", label="Invoice Number / رقم الفاتورة", required=True, aliases=["Invoice No", "Bill No"]),
-                    _f("invoice_date", "date", "Invoice Date / تاريخ الفاتورة", True, ["Date", "Issue Date"]),
-                    _f("due_date", "date", "Due Date / تاريخ الاستحقاق"),
-                    _f("supplier_name", label="Supplier / المورد", aliases=["Vendor", "Seller"], fallback="header_company"),
-                    _f("supplier_vat", label="Supplier VAT No / الرقم الضريبي", aliases=["VAT Number", "VAT No", "TRN"],
-                       regex=r"3\d{14}"),
-                    _f("customer_name", label="Customer / العميل", aliases=["Bill To", "Buyer"]),
-                    _f("customer_vat", label="Customer VAT No / الرقم الضريبي للعميل", aliases=["Buyer VAT"]),
-                    _f("po_number", label="PO Number / رقم أمر الشراء", aliases=["Purchase Order", "PO No"]),
-                    _f("subtotal", "currency", "Subtotal / المجموع الفرعي", True, ["Sub Total", "Net Amount"]),
-                    _f("vat_amount", "currency", "VAT / ضريبة القيمة المضافة", False, ["VAT 15%", "Tax", "VAT Amount"]),
-                    _f("total", "currency", "Total / الإجمالي", True, ["Total Amount", "Grand Total", "Amount Due"]),
-                    _f("currency", "enum", "Currency / العملة", enum=["SAR", "AED", "USD", "EUR", "GBP"]), LINE_ITEMS],
-                "checks": ["abs(subtotal + vat_amount - total) < 0.05"]},
+                    _f("invoice_number", label="Invoice number", required=True,
+                       aliases=["Invoice No", "Invoice #", "Bill No", "Rechnungsnummer", "Rechnung Nr", "N° de facture",
+                                "Numéro de facture", "Número de factura", "Nº Fatura", "Numero fattura", "Factuurnummer",
+                                "رقم الفاتورة", "发票号码", "請求書番号", "चालान संख्या"]),
+                    _f("invoice_date", "date", "Invoice date", True, ["Date", "Issue Date", "Rechnungsdatum", "Date de facture",
+                                                                       "Fecha", "Data", "Factuurdatum", "تاريخ الفاتورة", "开票日期", "発行日"]),
+                    _f("due_date", "date", "Due date", aliases=["Payment Due", "Fällig", "Échéance", "Vencimiento", "Scadenza",
+                                                                 "Vervaldatum", "تاريخ الاستحقاق", "支払期限"]),
+                    _f("supplier_name", label="Supplier", aliases=["Vendor", "Seller", "From", "Lieferant", "Fournisseur",
+                                                                    "Proveedor", "Fornecedor", "Fornitore", "Leverancier", "المورد",
+                                                                    "销售方", "供应商"], fallback="header_company"),
+                    _f("supplier_vat", label="Supplier tax ID", aliases=TAX_ID_WORDS),
+                    _f("customer_name", label="Customer", aliases=["Bill To", "Buyer", "Sold To", "Kunde", "Client", "Cliente",
+                                                                    "Klant", "العميل", "购买方"]),
+                    _f("customer_vat", label="Customer tax ID", aliases=["Buyer VAT", "Customer VAT No", "Buyer Tax ID",
+                                                                          "الرقم الضريبي للعميل"]),
+                    _f("po_number", label="PO number", aliases=["Purchase Order", "PO No", "Order No", "Bestellnummer",
+                                                                 "Bon de commande", "Orden de compra", "رقم أمر الشراء"]),
+                    _f("subtotal", "currency", "Subtotal", False, ["Sub Total", "Net Amount", "Net", "Nettobetrag", "Total HT",
+                                                                   "Base imponible", "Imponibile", "المجموع الفرعي", "小计"]),
+                    _f("discount", "currency", "Discount", aliases=["Rabatt", "Remise", "Descuento", "Desconto", "Sconto",
+                                                                     "Korting", "خصم", "折扣"]),
+                    _f("other_charges", "currency", "Other charges", aliases=["Shipping", "Freight", "Delivery", "Handling",
+                                                                               "Versand", "Frais de port", "Envío", "Frete",
+                                                                               "رسوم الشحن", "运费"]),
+                    _f("vat_amount", "currency", "Tax amount", False, TAX_WORDS),
+                    _f("total", "currency", "Total", True, ["Total Amount", "Grand Total", "Amount Due", "Balance Due",
+                                                             "Gesamtbetrag", "Total TTC", "Importe total", "Valor total",
+                                                             "Totale", "Totaal", "الإجمالي", "合计", "合計", "कुल"]),
+                    _cur(), LINE_ITEMS],
+                "checks": [INVOICE_TOTAL_CHECK]},
+    "credit_note": {"name": "Credit note", "description": "Credit notes from suppliers that reduce what we owe.",
+                    "keywords": ["credit note", "credit memo", "Gutschrift", "avoir", "nota de crédito", "nota di credito",
+                                 "creditnota", "إشعار دائن"],
+                    "fields": [_f("credit_note_number", label="Credit note number", required=True, aliases=["Credit Note No", "Credit Memo No"]),
+                               _f("credit_note_date", "date", "Date", True, ["Issue Date"]),
+                               _f("original_invoice", label="Original invoice", aliases=["Invoice No", "Reference"]),
+                               _f("supplier_name", label="Supplier", aliases=["Vendor", "Seller"], fallback="header_company"),
+                               _f("vat_amount", "currency", "Tax amount", False, TAX_WORDS),
+                               _f("total", "currency", "Total", True, ["Total Credit", "Amount", "Grand Total"]), _cur()],
+                    "checks": []},
     "purchase_order": {"name": "Purchase order", "description": "Purchase orders issued to vendors.",
-                       "keywords": ["purchase order", "P.O.", "أمر شراء"],
+                       "keywords": ["purchase order", "P.O.", "Bestellung", "bon de commande", "orden de compra",
+                                    "pedido de compra", "ordine di acquisto", "inkooporder", "أمر شراء", "采购订单", "注文書"],
                        "fields": [
-                           _f("po_number", label="PO Number / رقم أمر الشراء", required=True, aliases=["Purchase Order No", "PO No"]),
-                           _f("po_date", "date", "PO Date / التاريخ", True, ["Date", "Order Date"]),
-                           _f("vendor_name", label="Vendor / المورد", aliases=["Supplier"]),
-                           _f("delivery_date", "date", "Delivery Date / تاريخ التسليم"),
-                           _f("total", "currency", "Total / الإجمالي", True, ["Total Amount", "Grand Total"]), LINE_ITEMS],
+                           _f("po_number", label="PO number", required=True, aliases=["Purchase Order No", "PO No", "Order No",
+                                                                                     "Bestellnummer", "رقم أمر الشراء"]),
+                           _f("po_date", "date", "PO date", True, ["Date", "Order Date", "Bestelldatum", "التاريخ"]),
+                           _f("vendor_name", label="Vendor", aliases=["Supplier", "Lieferant", "Fournisseur", "Proveedor", "المورد"]),
+                           _f("delivery_date", "date", "Delivery date", aliases=["Liefertermin", "Date de livraison", "تاريخ التسليم"]),
+                           _f("total", "currency", "Total", True, ["Total Amount", "Grand Total", "Gesamt", "الإجمالي"]),
+                           _cur(), LINE_ITEMS],
                        "checks": []},
+    "delivery_note": {"name": "Delivery note", "description": "Delivery notes / packing slips that come with goods.",
+                      "keywords": ["delivery note", "packing slip", "goods received", "Lieferschein", "bon de livraison",
+                                   "albarán", "guia de remessa", "bolla", "pakbon", "إشعار تسليم", "送货单", "納品書"],
+                      "fields": [_f("delivery_number", label="Delivery note number", required=True, aliases=["Delivery No", "DN No", "Lieferschein-Nr"]),
+                                 _f("delivery_date", "date", "Delivery date", True, ["Date", "Ship Date"]),
+                                 _f("po_number", label="PO number", aliases=["Order No", "Purchase Order"]),
+                                 _f("supplier_name", label="Supplier", aliases=["Shipper", "Vendor"], fallback="header_company"),
+                                 _f("line_items", "table", "Items", columns=[
+                                     _f("description", label="Description", aliases=["Item", "Article"]),
+                                     _f("quantity", "number", "Quantity", aliases=["Qty", "Delivered"])])],
+                      "checks": []},
     "receipt": {"name": "Receipt", "description": "Retail / expense receipts.",
-                "keywords": ["receipt", "إيصال", "cashier", "thank you"],
-                "fields": [_f("merchant_name", label="Merchant / التاجر", aliases=["Store"], fallback="header_company"),
-                           _f("receipt_date", "date", "Date / التاريخ", True),
-                           _f("vat_amount", "currency", "VAT / الضريبة", aliases=["Tax"]),
-                           _f("total", "currency", "Total / الإجمالي", True, ["Amount", "Total Paid"]),
-                           _f("payment_method", "enum", "Payment method", enum=["Cash", "Card", "Mada", "Apple Pay", "Other"])],
+                "keywords": ["receipt", "Quittung", "Beleg", "reçu", "recibo", "ricevuta", "bon", "إيصال", "收据", "領収書",
+                             "cashier", "thank you"],
+                "fields": [_f("merchant_name", label="Merchant", aliases=["Store", "Shop", "التاجر"], fallback="header_company"),
+                           _f("receipt_date", "date", "Date", True, ["Datum", "Fecha", "التاريخ"]),
+                           _f("vat_amount", "currency", "Tax amount", aliases=TAX_WORDS),
+                           _f("total", "currency", "Total", True, ["Amount", "Total Paid", "Summe", "Total à payer", "الإجمالي"]),
+                           _cur(),
+                           {**_f("payment_method", "enum", "Payment method",
+                                 enum=["Cash", "Card", "Bank transfer", "Cheque", "Mobile wallet", "UPI", "Pix", "iDEAL",
+                                       "Apple Pay", "Google Pay", "Mada", "Other"]), "allowOther": True}],
                 "checks": []},
     "bank_statement": {"name": "Bank statement", "description": "Account statements with balances and transactions.",
-                       "keywords": ["statement", "IBAN", "opening balance", "كشف حساب"],
-                       "fields": [_f("bank_name", label="Bank / البنك"),
-                                  _f("account_number", label="IBAN / رقم الآيبان", required=True, aliases=["Account No", "IBAN"],
-                                     regex=r"SA\d{2}[A-Z0-9]{18}"),
-                                  _f("period_from", "date", "From / من"), _f("period_to", "date", "To / إلى"),
-                                  _f("opening_balance", "currency", "Opening Balance / الرصيد الافتتاحي", True),
-                                  _f("closing_balance", "currency", "Closing Balance / الرصيد الختامي", True),
+                       "keywords": ["statement", "account statement", "IBAN", "opening balance", "Kontoauszug",
+                                    "relevé de compte", "extracto", "extrato", "estratto conto", "rekeningafschrift",
+                                    "كشف حساب", "对账单"],
+                       "fields": [_f("bank_name", label="Bank", aliases=["البنك"]),
+                                  _f("account_number", label="Account number", required=True,
+                                     aliases=["Account No", "IBAN", "A/C No", "Kontonummer", "Numéro de compte", "Número de cuenta",
+                                              "رقم الحساب", "رقم الآيبان", "账号"]),
+                                  _f("period_from", "date", "From", aliases=["Period from", "Von", "Du", "Desde", "من"]),
+                                  _f("period_to", "date", "To", aliases=["Period to", "Bis", "Au", "Hasta", "إلى"]),
+                                  _f("opening_balance", "currency", "Opening balance", True, ["Previous Balance", "Anfangssaldo",
+                                                                                               "Solde initial", "Saldo inicial",
+                                                                                               "الرصيد الافتتاحي"]),
+                                  _f("closing_balance", "currency", "Closing balance", True, ["New Balance", "Endsaldo", "Solde final",
+                                                                                               "Saldo final", "الرصيد الختامي"]),
+                                  _cur(),
                                   _f("transactions", "table", "Transactions", columns=[
                                       _f("date", "date", "Date"), _f("description", label="Description"),
                                       _f("debit", "currency", "Debit"), _f("credit", "currency", "Credit"),
                                       _f("balance", "currency", "Balance")])],
                        "checks": []},
-    "id_document": {"name": "ID document", "description": "National ID / Iqama / passport data page.",
-                    "keywords": ["identity", "iqama", "passport", "هوية", "جواز", "nationality"],
-                    "fields": [_f("full_name", label="Name / الاسم", required=True),
-                               _f("id_number", label="ID Number / رقم الهوية", required=True, aliases=["Iqama No", "Passport No"],
-                                  regex=r"[12]\d{9}|[A-Z]\d{7,8}"),
-                               _f("nationality", label="Nationality / الجنسية"),
-                               _f("date_of_birth", "date", "Date of Birth / تاريخ الميلاد"),
-                               _f("expiry_date", "date", "Expiry Date / تاريخ الانتهاء", True)],
+    "id_document": {"name": "ID document", "description": "National ID cards, residence permits and passport data pages.",
+                    "keywords": ["identity", "identity card", "passport", "residence permit", "Personalausweis", "Reisepass",
+                                 "carte d'identité", "passeport", "documento de identidad", "pasaporte", "هوية", "جواز",
+                                 "iqama", "Aadhaar", "nationality", "身份证", "護照"],
+                    "fields": [_f("full_name", label="Name", required=True, aliases=["Surname", "Given names", "Name", "Nom", "Nombre", "الاسم"]),
+                               _f("id_number", label="ID number", required=True,
+                                  aliases=["ID No", "Document No", "Passport No", "Card No", "Ausweisnummer", "N° du document",
+                                           "Número de documento", "Iqama No", "رقم الهوية"]),
+                               _f("nationality", label="Nationality", aliases=["Staatsangehörigkeit", "Nationalité", "Nacionalidad", "الجنسية"]),
+                               _f("date_of_birth", "date", "Date of birth", aliases=["Birth date", "Geburtsdatum", "Date de naissance",
+                                                                                      "Fecha de nacimiento", "تاريخ الميلاد"]),
+                               _f("expiry_date", "date", "Expiry date", True, ["Valid until", "Date of expiry", "Gültig bis",
+                                                                               "Date d'expiration", "Fecha de caducidad", "تاريخ الانتهاء"])],
                     "checks": []},
+    "utility_bill": {"name": "Utility bill", "description": "Electricity, water, gas, phone and internet bills.",
+                     "keywords": ["electricity", "water", "gas", "utility", "meter", "kWh", "Stromrechnung", "facture d'électricité",
+                                  "factura de luz", "فاتورة كهرباء"],
+                     "fields": [_f("provider_name", label="Provider", aliases=["Supplier"], fallback="header_company"),
+                                _f("account_number", label="Account number", required=True, aliases=["Customer No", "Account No", "Kundennummer"]),
+                                _f("bill_date", "date", "Bill date", True, ["Date", "Invoice Date"]),
+                                _f("due_date", "date", "Due date", aliases=["Pay by", "Payment Due"]),
+                                _f("total", "currency", "Amount due", True, ["Total", "Total Due", "Amount Payable"]), _cur()],
+                     "checks": []},
+    "contract": {"name": "Contract", "description": "Agreements between two or more parties.",
+                 "keywords": ["agreement", "contract", "hereinafter", "parties", "Vertrag", "contrat", "contrato", "contratto",
+                              "overeenkomst", "عقد", "合同", "契約"],
+                 "fields": [_f("title", label="Title", fallback="header_company"),
+                            {**_f("parties", label="Parties", required=True), "method": "infer",
+                             "description": "The names of the parties to the agreement, separated by semicolons"},
+                            _f("effective_date", "date", "Effective date", aliases=["Commencement Date", "Start Date"]),
+                            _f("end_date", "date", "End date", aliases=["Expiry Date", "Termination Date"]),
+                            {**_f("summary", label="Summary"), "method": "infer",
+                             "description": "What the contract is about, in one sentence"}],
+                 "checks": []},
+    "other": {"name": "Other document", "description": "Any document that is none of the other types: its text, labelled values "
+                                                       "and tables are kept, with no fixed fields.",
+              "keywords": [],
+              "fields": [{**_f("title", label="Title"), "method": "infer",
+                          "description": "The document's title or what kind of document it is, in a few words"},
+                         _f("document_date", "date", "Date", aliases=["Datum", "Fecha", "التاريخ"]),
+                         {**_f("summary", label="Summary"), "method": "infer",
+                          "description": "What the document is about, in one sentence"}],
+              "checks": []},
 }
+# built-in types seeded by DocFlow before 3.3 carried Saudi-only defaults; _upgrade_global() replaces exactly these
+OLD_SAUDI_REGEX = {r"3\d{14}", r"SA\d{2}[A-Z0-9]{18}", r"[12]\d{9}|[A-Z]\d{7,8}"}
+OLD_CURRENCIES = ["SAR", "AED", "USD", "EUR", "GBP"]
+OLD_PAYMENT = ["Cash", "Card", "Mada", "Apple Pay", "Other"]
 
 
 def library() -> list[dict]:
@@ -631,6 +743,9 @@ class DocFlowService:
         elif not self.store.meta_get("df.library.fallbacks"):
             self._upgrade_fallbacks()
         self.store.meta_set("df.library.fallbacks", "1")
+        if not self.store.meta_get("df.library.global"):
+            self._upgrade_global()
+            self.store.meta_set("df.library.global", "1")
         raw = self.store.df_get("flow", INBOX_ID)
         if raw:
             inbox = Flow.model_validate_json(raw)
@@ -654,6 +769,41 @@ class DocFlowService:
                 want = next((x.get("fallback") for x in lib["fields"] if x["name"] == f.name), None)
                 if want and f.fallback is None and f.type == "string":
                     f.fallback, changed = want, True
+            if changed:
+                self.save_doctype(dt)
+
+    def _upgrade_global(self) -> None:
+        """Once (DocFlow 3.3): built-in types seeded with Saudi-only defaults become global. Only values still exactly
+        as seeded change: the Saudi VAT / IBAN / ID patterns are removed, the five-currency list grows and keeps
+        other codes, payment methods grow, the invoice total check allows missing tax, discounts and charges. Library
+        types the install does not have yet (credit note, delivery note, utility bill, contract, other) are added."""
+        for cat, lib in LIBRARY.items():
+            raw = self.store.df_get("doctype", cat)
+            if not raw:
+                if self.store.df_list("doctype"):
+                    self.save_doctype(DocType(id=cat, name=lib["name"], description=lib["description"], category=cat,
+                                              keywords=lib["keywords"], checks=lib["checks"],
+                                              fields=[FieldDef.model_validate(f) for f in lib["fields"]]), new=True)
+                continue
+            dt, changed = DocType.model_validate_json(raw), False
+            have = {f.name for f in dt.fields}
+            for f in dt.fields:
+                if f.regex in OLD_SAUDI_REGEX:
+                    f.regex, changed = None, True
+                if f.type == "enum" and f.enumValues == OLD_CURRENCIES:
+                    f.enumValues, f.allowOther, changed = list(CURRENCIES), True, True
+                if f.type == "enum" and f.enumValues == OLD_PAYMENT:
+                    want = next((x for x in lib["fields"] if x["name"] == f.name), None)
+                    if want:
+                        f.enumValues, f.allowOther, changed = list(want["enumValues"]), True, True
+                if cat == "invoice" and f.name == "subtotal" and f.required:
+                    f.required, changed = False, True
+            if cat == "invoice" and OLD_INVOICE_CHECK in dt.checks:
+                dt.checks = [INVOICE_TOTAL_CHECK if c == OLD_INVOICE_CHECK else c for c in dt.checks]
+                for x in lib["fields"]:   # the check reads discount and other charges: add them when missing
+                    if x["name"] in ("discount", "other_charges") and x["name"] not in have:
+                        dt.fields.insert(max(0, len(dt.fields) - 2), FieldDef.model_validate(x))
+                changed = True
             if changed:
                 self.save_doctype(dt)
 

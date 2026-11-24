@@ -262,6 +262,8 @@ class RulesExtractor(ExtractionProvider):
             if colon and re.search(r"[A-Za-z\u0600-\u06FF]{2,}", rest[:colon.start()]):
                 continue  # the printed label is longer ("Supplier VAT No:" is not "Supplier:")
             after = rest.lstrip(" :：#-\t")
+            if f.type in ("currency", "number"):   # "VAT 15%: 150.00", "GST (18%) 90.00": the amount, not the rate
+                after = re.sub(r"^\(?\s*\d{1,2}(?:[.,]\d+)?\s*%\s*\)?\s*[:：=]?\s*(?=\S)", "", after)
             candidates = []   # (text, OCR confidence of the value's words, where it is)
             if after:
                 at = len(line.text) - len(after)
@@ -390,7 +392,9 @@ RULES_INFO = ProviderInfo(
 
 # ------------------------------------------------------------- validation rules
 
-_ALLOWED_FUNCS = {"sum": sum, "round": round, "abs": abs, "len": len, "min": min, "max": max}
+_ALLOWED_FUNCS = {"sum": sum, "round": round, "abs": abs, "len": len, "min": min, "max": max,
+                  # value_or(x, default): x, or default when x is missing (checks that allow optional fields)
+                  "value_or": lambda v, d=0: d if v in (None, "", []) else v}
 _OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv,
         ast.Mod: operator.mod, ast.USub: operator.neg, ast.UAdd: operator.pos,
         ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt, ast.LtE: operator.le,
