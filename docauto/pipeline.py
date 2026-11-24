@@ -315,6 +315,8 @@ class DocumentService:
                 self.store.add_correction(meta.get("doctype_id") or meta.get("instance_id"), document_id, name,
                                           f.value, value, reviewer)
                 f.originalValue, f.value, f.corrected = f.value, value, True
+            if f.readConfidence is None:   # how sure the reading was, before the person confirmed it (accuracy report)
+                f.readConfidence = f.confidence
             f.confidence = 1.0
             f.validation.passed, f.validation.errors = True, []
         if corrections:  # point the review screen at the corrected values, where they are printed

@@ -1303,6 +1303,48 @@ class DocFlowService:
         return _merge_reasons(_flag_reasons(flags), review_reasons(res, dt.schema(), rv.fieldConfidence,
                                                                    rv.documentConfidence, rv.fieldThresholds))
 
+    def accuracy(self, flow_id: str, limit: int = 500) -> dict:
+        """How well a process reads, from its own reviewed documents: per field how often reviewers changed the value,
+        the share of documents that needed no person, and what each review level would do: the share of fields that
+        would go straight through, and how many of those a reviewer had to correct (errors that would slip by)."""
+        fl = self.flow(flow_id)
+        rows = self.store.instance_documents(flow_id, ["success", "validated", "invalid", "validation"], limit)
+        finished = [r for r in rows if r["status"] in ("success", "validated")]
+        straight = sum(1 for r in finished if r["status"] == "success")
+        per: dict[str, dict] = {}
+        points: list[tuple[float, bool]] = []
+        reviewed = 0
+        for r in rows:
+            if r["status"] != "validated":
+                continue
+            res = self.store.get_result(r["id"])
+            if not res:
+                continue
+            reviewed += 1
+            for f in res.fields:
+                if f.type == "table":
+                    continue
+                e = per.setdefault(f.name, {"name": f.name, "seen": 0, "corrected": 0})
+                e["seen"] += 1
+                e["corrected"] += 1 if f.corrected else 0
+                if f.readConfidence is not None:
+                    points.append((f.readConfidence, bool(f.corrected)))
+        levels = []
+        for t in (0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.99):
+            auto = [c for conf, c in points if conf >= t]
+            levels.append({"level": t, "straightThrough": round(len(auto) / len(points), 4) if points else None,
+                           "wrongPassed": round(sum(auto) / len(auto), 4) if auto else None, "fields": len(auto)})
+        labels = {}
+        for dt in self.flow_doctypes(fl):
+            labels.update({x.name: (x.label or x.name).split(" / ")[0] for x in dt.fields})
+        fields = sorted(({**e, "label": labels.get(e["name"], e["name"]),
+                          "correctedShare": round(e["corrected"] / e["seen"], 4) if e["seen"] else 0} for e in per.values()),
+                        key=lambda x: -x["correctedShare"])
+        return {"documents": len(rows), "finished": len(finished), "reviewed": reviewed,
+                "straightThrough": round(straight / len(finished), 4) if finished else None,
+                "reviewLevel": fl.review.fieldConfidence, "fields": fields, "levels": levels,
+                "measured": len(points)}
+
     def review(self, doc_id: str, fields: dict, reviewer: str, action: str = "submit", note: str = "") -> dict:
         row = self.store.doc_row(doc_id)
         if not row:

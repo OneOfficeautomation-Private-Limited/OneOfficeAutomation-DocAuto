@@ -687,6 +687,13 @@ async def df_upload(flow_id: str, files: list[UploadFile] = File(...), wait: boo
     return {"documents": out}
 
 
+@app.get(f"{DF}/flows/{{flow_id}}/accuracy")
+def df_flow_accuracy(flow_id: str, limit: int = Query(500, ge=10, le=5000), _: str = Depends(auth)):
+    """How well a process reads, from its reviewed documents (per field corrections, straight-through share, and
+    what each review level would do)."""
+    return docflow().accuracy(flow_id, limit)
+
+
 @app.get(f"{DF}/flows/{{flow_id}}/documents")
 def df_flow_documents(flow_id: str, status: Optional[str] = None, limit: int = 200, offset: int = 0,
                       fields: bool = False, _: str = Depends(auth)):

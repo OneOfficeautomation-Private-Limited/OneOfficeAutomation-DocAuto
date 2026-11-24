@@ -330,3 +330,28 @@ def test_reference_tables_in_more_formats():
     assert head == ["code", "name"] and rows == [{"code": "S1", "name": "Acme"}]
     head, rows = parse_table_file(b"S1,Acme\nS2,Globex\n", "s.csv", header_row=0)
     assert head == ["col1", "col2"] and len(rows) == 2
+
+
+def test_accuracy_from_reviewed_documents(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tests.conftest import make_config
+    from tests.test_einvoice import invoice_pdf
+    import docauto.api.app as appmod
+    from docauto.pipeline import DocumentService
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    monkeypatch.delenv("DOCAUTO_PLATFORM_URL", raising=False)
+    monkeypatch.delenv("DOCAUTO_API_TOKEN", raising=False)
+    appmod.set_service(DocumentService(make_config()))
+    c = TestClient(appmod.app)
+    DF = "/api/docs/v1/df"
+    fid = c.post(f"{DF}/flows", json={"name": "AP", "docTypes": ["invoice"], "intake": {"einvoiceFirst": False}}).json()["id"]
+    lines = ["ACME Trading Co.", "Invoice", "Invoice Number: INV-77", "Invoice Date: 2026-11-03", "Subtotal: 100.00", "Total: 100.00 EUR"]
+    r = c.post(f"{DF}/flows/{fid}/documents", params={"wait": "true"}, files=[("files", ("a.pdf", invoice_pdf(lines), "application/pdf"))])
+    doc = r.json()["documents"][0]["documentId"]
+    c.post(f"{DF}/documents/{doc}/review", json={"action": "submit", "fields": {"invoice_number": "INV-0077"}, "note": "number fixed"})
+    a = c.get(f"{DF}/flows/{fid}/accuracy").json()
+    by = {f["name"]: f for f in a["fields"]}
+    assert a["reviewed"] == 1 and by["invoice_number"]["corrected"] == 1 and by["total"]["corrected"] == 0
+    assert a["measured"] > 0 and len(a["levels"]) == 9 and all(0 <= (x["wrongPassed"] or 0) <= 1 for x in a["levels"])
+    res = c.get(f"/api/docs/v1/documents/{doc}/result").json()
+    assert "Reviewer note: number fixed" in res["warnings"]

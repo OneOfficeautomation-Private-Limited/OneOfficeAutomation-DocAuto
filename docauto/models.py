@@ -144,6 +144,7 @@ class ExtractedField(BaseModel):
     # "einvoice-xml" (the invoice's own XML, no page location)
     grounded: Optional[bool] = None
     groundedBy: Optional[str] = None
+    readConfidence: Optional[float] = None   # how sure the reading was, kept when a reviewer confirms (accuracy)
     writeAs: Optional[str] = None     # the field's "write as" (FieldDef.output), kept so corrected values are written the same way
     notes: list[str] = Field(default_factory=list)   # soft notes (a value outside the choices, a pattern to check)
     rowLocations: Optional[list[RowLocation]] = None   # table fields: where each row and cell is
