@@ -24,10 +24,13 @@ from docauto.normalize import union_bbox
 from docauto.provider import ExtractionProvider, ExtractRequest, HealthStatus
 
 SYSTEM_PROMPT = (
-    "You extract data from business documents (English and Arabic). "
+    "You extract data from business documents in any language. "
     "Use ONLY information present in the document. Never guess. "
-    "If a field is absent, return null. Copy values exactly as printed, then normalize: "
-    "dates to YYYY-MM-DD, numbers without currency symbols or thousands separators. "
+    "If a field is absent, return null. Fields with method \"extract\": copy values exactly as printed, then normalize: "
+    "dates to YYYY-MM-DD, date-times to YYYY-MM-DDTHH:MM, numbers and percentages as plain numbers without currency "
+    "symbols or thousands separators, ticked/signed/yes-no as true or false. Fields with method \"infer\": answer the "
+    "field's description from the whole document, briefly. Fields with method \"classify\": return exactly one of "
+    "\"allowed\" (use the choice meanings when given). \"allowed\" lists the only values unless otherOk is true. "
     "Reply with a single JSON object and nothing else."
 )
 
@@ -48,8 +51,14 @@ def build_prompt(doc: DocumentResult, schema: FieldSchema, max_chars: int = 6000
         for k in ("label", "description", "format"):
             if getattr(f, k):
                 d[k] = getattr(f, k)
+        if f.method != "extract":
+            d["method"] = f.method
         if f.enumValues:
             d["allowed"] = f.enumValues
+        if f.enumDescriptions:
+            d["choiceMeanings"] = f.enumDescriptions
+        if f.allowOther:
+            d["otherOk"] = True
         if f.aliases:
             d["aliases"] = f.aliases
         if f.columns:
@@ -95,7 +104,7 @@ def parse_llm_fields(content: str, schema: FieldSchema, index: dict[str, Any], d
             out.append(ExtractedField(name=f.name, type=f.type, value=None, confidence=0.0, providerId=provider_id))
             continue
         raw = value
-        if f.type not in ("table", "object") and not isinstance(value, (int, float, bool)):
+        if f.type not in ("table", "object") and not isinstance(value, (int, float, bool, list)):
             value, ok = coerce(str(value), f.type, f.format)
             if not ok:
                 model_conf *= 0.5
@@ -103,7 +112,9 @@ def parse_llm_fields(content: str, schema: FieldSchema, index: dict[str, Any], d
         ocr_confs = [index[l][1].confidence for l in lines if index[l][1].confidence is not None]
         ocr_conf = sum(ocr_confs) / len(ocr_confs) if ocr_confs else 0.9
         grounded = bool(lines)
-        if f.type not in ("table", "object"):
+        if f.method != "extract":   # worked out / picked: an answer about the document, not text printed on it
+            grounded = True
+        elif f.type not in ("table", "object", "multienum", "checkbox", "signature", "boolean"):
             grounded = grounded and (_norm(raw) in full or _norm(value) in full or
                                      any(_norm(raw) in _norm(index[l][1].text) for l in lines))
         conf = model_conf * ocr_conf * (1.0 if grounded else 0.5)

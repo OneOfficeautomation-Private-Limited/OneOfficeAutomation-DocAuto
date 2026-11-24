@@ -144,7 +144,15 @@ class ExtractedField(BaseModel):
     # "einvoice-xml" (the invoice's own XML, no page location)
     grounded: Optional[bool] = None
     groundedBy: Optional[str] = None
+    writeAs: Optional[str] = None     # the field's "write as" (FieldDef.output), kept so corrected values are written the same way
+    notes: list[str] = Field(default_factory=list)   # soft notes (a value outside the choices, a pattern to check)
     rowLocations: Optional[list[RowLocation]] = None   # table fields: where each row and cell is
+
+    def out(self) -> Any:
+        """The value as results, exports and deliveries write it: by the field's "write as", else as read."""
+        from .normalize import write_as
+        w = write_as(self.value, self.type, self.writeAs)
+        return self.value if w is None else w
 
 
 class ReviewStatus(str, Enum):
@@ -227,7 +235,11 @@ class DocumentResult(BaseModel):
 
 # ---------------------------------------------------------------- FieldSchema
 
-FieldType = Literal["string", "number", "currency", "date", "boolean", "enum", "table", "object"]
+FieldType = Literal["string", "number", "currency", "date", "boolean", "enum", "table", "object",
+                    "datetime", "percentage", "email", "phone", "address", "checkbox", "signature", "multienum"]
+# how a field is read: extract = copied as printed; infer = worked out from the whole document (AI reading only:
+# a summary, "is it overdue?"); classify = one of enumValues picked to fit (AI reading only)
+FieldMethod = Literal["extract", "infer", "classify"]
 
 
 class FieldDef(BaseModel):
@@ -242,6 +254,11 @@ class FieldDef(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     columns: list["FieldDef"] = Field(default_factory=list)
     confidenceThreshold: Optional[float] = None
+    method: FieldMethod = "extract"
+    enumDescriptions: dict[str, str] = Field(default_factory=dict)   # what each choice means (AI reading picks by it)
+    allowOther: bool = False          # a value outside enumValues is kept with a note, not an error
+    patternSeverity: Literal["error", "warn", "off"] = "error"   # what a failed regex does: review / note / nothing
+    output: Optional[str] = None      # "write as": how the value is written in results (see docauto.normalize.write_as)
     # rules extractor: where to look when no label is printed. "header_company": the company name at the top of
     # page 1 (the issuer of an invoice or receipt), at modest confidence so a person checks it
     fallback: Optional[Literal["header_company"]] = None

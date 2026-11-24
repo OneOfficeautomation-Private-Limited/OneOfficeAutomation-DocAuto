@@ -9,6 +9,48 @@ from .models import BBox
 _ARABIC = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]")
 
 
+def write_as(value, ftype: str, fmt: str | None):
+    """The value written as a field's "write as" asks, or None when nothing changes. Dates and date-times take a
+    pattern of YYYY, MM, DD, MMM, MMMM, HH, hh, mm, ss, A ("DD/MM/YYYY"); numbers "N decimals"; text UPPER, lower,
+    Title Case, Trimmed; phones "Digits only", "International (+)". An unknown format leaves the value as read."""
+    import re as _re
+    from datetime import datetime as _dt
+    if value in (None, "", []) or not fmt:
+        return None
+    f = fmt.strip()
+    m = _re.fullmatch(r"(\d)\s*decimals?", f, _re.I)
+    if m and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{value:.{int(m.group(1))}f}"
+    if ftype in ("date", "datetime") and isinstance(value, str):
+        try:
+            d = _dt.fromisoformat(value)
+        except ValueError:
+            return None
+        py = (f.replace("YYYY", "%Y").replace("MMMM", "%B").replace("MMM", "%b").replace("MM", "%m")
+              .replace("DD", "%d").replace("D", "%-d").replace("HH", "%H").replace("hh", "%I").replace("mm", "%M")
+              .replace("ss", "%S").replace(" A", " %p"))
+        try:
+            return d.strftime(py)
+        except ValueError:       # %-d is not known on Windows
+            return d.strftime(py.replace("%-d", "%d").lstrip("0"))
+    if isinstance(value, str):
+        low = f.lower()
+        if low == "upper":
+            return value.upper()
+        if low == "lower":
+            return value.lower()
+        if low == "title case":
+            return value.title()
+        if low == "trimmed":
+            return " ".join(value.split())
+        if low == "digits only":
+            return _re.sub(r"\D", "", value)
+        if low.startswith("international"):
+            digits = _re.sub(r"[^\d+]", "", value)
+            return digits if digits.startswith("+") else "+" + digits.lstrip("0")
+    return None
+
+
 def clamp01(v: float) -> float:
     return max(0.0, min(1.0, v))
 

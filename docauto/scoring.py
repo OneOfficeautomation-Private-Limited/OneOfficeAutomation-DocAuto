@@ -128,11 +128,22 @@ def score(doc: DocumentResult, schema: FieldSchema | None, field_threshold: floa
         if fd:
             if fd.required and _empty(fld.value):
                 errs.append("required field missing")
-            if fd.type == "enum" and fd.enumValues and fld.value not in (None, "") and fld.value not in fd.enumValues:
-                errs.append(f"value not in {fd.enumValues}")
-            if (fd.regex and isinstance(fld.value, str) and fld.value and not re.search(fd.regex, fld.value)
-                    and not (fld.rawText and re.search(fd.regex, fld.rawText))):
-                errs.append("does not match pattern")
+            if fd.type in ("enum", "multienum") and fd.enumValues and fld.value not in (None, "", []):
+                vals = fld.value if isinstance(fld.value, list) else [fld.value]
+                off = [v for v in vals if v not in fd.enumValues]
+                if off and fd.allowOther:
+                    note = "not one of the choices: " + ", ".join(map(str, off))
+                    if note not in fld.notes:
+                        fld.notes.append(note)
+                elif off:
+                    errs.append(f"value not in {fd.enumValues}")
+            if (fd.regex and fd.patternSeverity != "off" and isinstance(fld.value, str) and fld.value
+                    and not re.search(fd.regex, fld.value) and not (fld.rawText and re.search(fd.regex, fld.rawText))):
+                if fd.patternSeverity == "warn":
+                    if "does not match the format" not in fld.notes:
+                        fld.notes.append("does not match the format")
+                else:
+                    errs.append("does not match pattern")
         new_errs = [e for e in errs if e not in fld.validation.errors]
         fld.validation.errors = errs
         fld.validation.passed = not errs
@@ -141,6 +152,11 @@ def score(doc: DocumentResult, schema: FieldSchema | None, field_threshold: floa
         elif (fd and fd.regex and not errs and fld.confidence and isinstance(fld.value, str)
               and re.fullmatch(fd.regex, fld.value)):
             fld.confidence = round(max(fld.confidence, min(MAX_CONFIDENCE, fld.confidence + PATTERN_BOOST)), 4)
+
+    for fld in doc.fields:
+        fd = defs.get(fld.name)
+        if fd is not None:
+            fld.writeAs = fd.output or None
 
     # 2) cross-field rules
     failed: list[str] = []

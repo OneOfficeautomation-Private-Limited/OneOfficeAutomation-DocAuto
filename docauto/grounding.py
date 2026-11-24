@@ -307,8 +307,12 @@ def ground_document(doc: DocumentResult, schema: Optional[FieldSchema] = None, a
     if not doc.pages:
         return
     g = Grounder(doc)
+    # worked-out and picked fields answer a question about the document: they are not printed on it
+    answers = {f.name for f in schema.fields if f.method != "extract"} if schema else set()
     for fld in doc.fields:
         if only is not None and fld.name not in only:
+            continue
+        if fld.name in answers:
             continue
         if fld.type == "table" or isinstance(fld.value, list):
             ground_table(g, fld, schema)

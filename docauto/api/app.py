@@ -156,6 +156,8 @@ def get_fields(doc_id: str, _: str = Depends(auth)):
     return {"documentId": doc_id, "reviewRequired": res.review.required, "reviewStatus": res.review.status,
             "reviewReasons": [r.model_dump() for r in res.review.reasons],
             "fields": {f.name: f.value for f in res.fields},
+            "written": {f.name: f.out() for f in res.fields if f.writeAs},
+            "notes": {f.name: f.notes for f in res.fields if f.notes},
             "confidence": {f.name: f.confidence for f in res.fields},
             "locations": locations(res)}
 
@@ -193,7 +195,7 @@ def export(doc_id: str, format: str = Query("csv", pattern="^(csv|json|xlsx)$"),
     if format == "json":
         return json.loads(res.model_dump_json())
     rows = [("field", "value", "confidence", "page", "corrected")] + \
-           [(f.name, json.dumps(f.value, ensure_ascii=False) if isinstance(f.value, (list, dict)) else f.value,
+           [(f.name, json.dumps(f.value, ensure_ascii=False) if isinstance(f.value, (list, dict)) else f.out(),
              f.confidence, f.page, f.corrected) for f in res.fields]
     if format == "xlsx":
         try:
@@ -661,7 +663,7 @@ def df_flow_documents(flow_id: str, status: Optional[str] = None, limit: int = 2
         store = service().store
         for r in rows:
             res = store.get_result(r["id"])
-            r["fields"] = {f.name: f.value for f in res.fields} if res else {}
+            r["fields"] = {f.name: f.out() for f in res.fields} if res else {}
             r["confidence"] = res.confidence if res else None
             r["pages"] = len(res.pages) if res else None
             r["engines"] = list(dict.fromkeys(s.providerId for s in res.provenance.steps
@@ -787,12 +789,30 @@ def df_reftables(_: str = Depends(auth)):
     return service().store.ref_list()
 
 
+def ref_table_id(title: str, existing: list[dict], wanted: str = "") -> str:
+    """The id a reference table is saved under. wanted (an existing table's id) replaces that table; a table with the
+    same name (any case) is replaced, as before; otherwise a new id that no other table has: a slug of the name, or
+    "table-<n>" for names with no Latin letters, so two different names never overwrite each other."""
+    ids = {t["id"] for t in existing}
+    if wanted and wanted in ids:
+        return wanted
+    same = [t["id"] for t in existing if (t.get("name") or "").strip().lower() == title.strip().lower()]
+    if same:
+        return same[0]
+    base = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "table"
+    rid, n = base, 2
+    while rid in ids:
+        rid, n = f"{base}-{n}", n + 1
+    return rid
+
+
 @app.post(f"{DF}/reftables")
-async def df_ref_upload(file: UploadFile = File(...), name: str = Form(""), _: str = Depends(auth)):
+async def df_ref_upload(file: UploadFile = File(...), name: str = Form(""), id: str = Form(""),
+                        _: str = Depends(auth)):
     data = await file.read()
     cols, rows = parse_table_file(data, file.filename or "table.csv")
     title = name.strip() or Path(file.filename or "table").stem
-    ref_id = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "table"
+    ref_id = ref_table_id(title, service().store.ref_list(), id.strip())
     service().store.ref_save(ref_id, title, cols, rows)
     return {"id": ref_id, "name": title, "columns": cols, "rowCount": len(rows)}
 

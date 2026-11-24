@@ -59,19 +59,62 @@ def coerce(value: str, ftype: str, fmt: Optional[str] = None) -> tuple[Any, bool
         cand = token.group(0) if token else v
         for f in ([fmt] if fmt else []) + _DATE_FORMATS:
             try:
-                py_fmt = f.replace("YYYY", "%Y").replace("MM", "%m").replace("DD", "%d") if "%" not in f else f
+                py_fmt = _py_date_format(f)
                 return datetime.strptime(cand, py_fmt).date().isoformat(), True
             except (ValueError, TypeError):
                 continue
         return value, False
-    if ftype == "boolean":
-        low = v.lower()
-        if low in ("yes", "true", "y", "1", "x", "✓", "نعم"):
+    if ftype in ("boolean", "checkbox", "signature"):
+        low = v.lower().strip("[]() ")
+        if low in YES_WORDS or v in ("☑", "☒", "✔", "✓", "[x]", "[X]", "(x)"):
             return True, True
-        if low in ("no", "false", "n", "0", "لا"):
+        if low in NO_WORDS or v in ("☐", "[ ]", "( )"):
             return False, True
+        if ftype == "signature" and v:
+            return True, True     # a signature read as text (a name, initials) means signed
         return value, False
+    if ftype == "percentage":
+        m = _NUM.search(v)
+        if not m:
+            return value, False
+        try:
+            return _to_float(m.group(0)), True
+        except ValueError:
+            return value, False
+    if ftype == "datetime":
+        cand = re.sub(r"\s+", " ", v)
+        for f in ([fmt] if fmt else []) + _DATETIME_FORMATS:
+            try:
+                py_fmt = _py_date_format(f)
+                return datetime.strptime(cand, py_fmt).isoformat(timespec="minutes"), True
+            except (ValueError, TypeError):
+                continue
+        d, ok = coerce(v, "date", None)
+        return (d + "T00:00" if ok else value), ok
+    if ftype == "email":
+        m = re.search(r"[\w.%+-]+@[\w-]+(?:\.[\w-]+)*\.\w{2,}", v)
+        return (m.group(0), True) if m else (value, False)
+    if ftype == "phone":
+        digits = re.sub(r"[^\d+]", "", v)
+        return (v, True) if len(re.sub(r"\D", "", digits)) >= 5 else (value, False)
+    if ftype == "multienum":
+        parts = [x.strip() for x in re.split(r"[,;/،\n]", v) if x.strip()]
+        return parts, bool(parts)
     return v, bool(v)
+
+
+YES_WORDS = {"yes", "true", "y", "1", "x", "نعم", "ja", "oui", "si", "sí", "sim", "da", "evet", "haan", "हाँ", "是", "はい", "예", "ano", "tak", "kyllä", "ναι", "כן", "да"}
+NO_WORDS = {"no", "false", "n", "0", "لا", "nein", "non", "não", "nao", "nee", "nie", "hayır", "नहीं", "否", "いいえ", "아니요", "ne", "ei", "όχι", "לא", "нет"}
+_DATETIME_FORMATS = ["%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y %H:%M",
+                     "%m/%d/%Y %H:%M", "%d.%m.%Y %H:%M", "%d/%m/%Y %I:%M %p", "%m/%d/%Y %I:%M %p", "%d-%m-%Y %H:%M"]
+
+
+def _py_date_format(f: str) -> str:
+    """A date pattern in YYYY/MM/DD words (or already strptime %-style) as a strptime format."""
+    if "%" in f:
+        return f
+    return (f.replace("YYYY", "%Y").replace("MMMM", "%B").replace("MMM", "%b").replace("MM", "%m").replace("DD", "%d")
+            .replace("HH", "%H").replace("hh", "%I").replace("mm", "%M").replace("ss", "%S").replace("A", "%p"))
 
 
 def _labels(f: FieldDef) -> list[str]:
@@ -153,7 +196,10 @@ class RulesExtractor(ExtractionProvider):
         doc = req.document
         out = []
         for f in req.schema.fields:
-            if f.type == "table":
+            if f.method != "extract":   # worked out / picked: AI reading only; the rules leave it empty
+                out.append(ExtractedField(name=f.name, type=f.type, value=None, confidence=0.0, providerId=self.info.id,
+                                          notes=["needs AI reading"]))
+            elif f.type == "table":
                 out.append(self._table(doc, f))
             else:
                 out.append(self._scalar(doc, f))
@@ -225,7 +271,7 @@ class RulesExtractor(ExtractionProvider):
                 candidates.append((nxt.text, nxt.confidence, nxt.bbox))
             for c, conf, box in candidates:
                 val, ok = coerce(c, f.type, f.format)
-                if ok and (f.type != "enum" or not f.enumValues or val in f.enumValues):
+                if ok and (f.type != "enum" or not f.enumValues or f.allowOther or val in f.enumValues):
                     return self._field(f, val, c, conf, p.pageNumber, box, 0.75 if fuzzy else 0.9)
         # 4) enum without a label: a single allowed value printed anywhere (e.g. "Total: 11,500.00 SAR")
         if f.type == "enum" and f.enumValues:

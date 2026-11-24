@@ -48,7 +48,8 @@ DEFAULT_MODEL = "claude-haiku-5-5"
 DEFAULT_ESCALATION = "claude-sonnet-5-5"
 NO_SERVER_FALLBACK = ("claude-haiku-",)   # Haiku has no server-side refusal fallback (a fallback list is a 400)
 NO_EFFORT = ("claude-haiku-4-5",)         # older Haiku: no effort parameter
-_SCALAR = {"number": {"type": "number"}, "currency": {"type": "number"}, "boolean": {"type": "boolean"}}
+_SCALAR = {"number": {"type": "number"}, "currency": {"type": "number"}, "percentage": {"type": "number"},
+           "boolean": {"type": "boolean"}, "checkbox": {"type": "boolean"}, "signature": {"type": "boolean"}}
 
 
 def _nullable(s: dict) -> dict:
@@ -62,7 +63,10 @@ def _value_schema(f: FieldDef) -> dict:
         cols = {c.name: _nullable(_SCALAR.get(c.type, {"type": "string"})) for c in f.columns}
         return _nullable({"type": "array", "items": {"type": "object", "properties": cols, "required": list(cols),
                                                      "additionalProperties": False}})
-    if f.type == "enum" and f.enumValues:
+    if f.type == "multienum":
+        items = {"type": "string", "enum": list(f.enumValues)} if f.enumValues and not f.allowOther else {"type": "string"}
+        return _nullable({"type": "array", "items": items})
+    if (f.type == "enum" or f.method == "classify") and f.enumValues and not f.allowOther:
         return _nullable({"type": "string", "enum": list(f.enumValues)})
     return _nullable(_SCALAR.get(f.type, {"type": "string"}))
 

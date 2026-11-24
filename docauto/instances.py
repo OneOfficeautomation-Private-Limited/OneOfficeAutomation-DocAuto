@@ -238,7 +238,7 @@ class InstanceService:
             raise InvalidInput("add at least one field")
         seen = set()
         for f in inst.fields:
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", f.name or ""):
+            if not (f.name or "").isidentifier():
                 raise InvalidInput(f"field name '{f.name}' must use letters, digits and underscore")
             if f.name in seen:
                 raise InvalidInput(f"duplicate field '{f.name}'")
@@ -321,7 +321,7 @@ class InstanceService:
         if not row:
             raise InvalidInput(f"unknown document '{doc_id}'")
         res = self.store.get_result(doc_id)
-        row["fields"] = {f.name: f.value for f in res.fields} if res else {}
+        row["fields"] = {f.name: f.out() for f in res.fields} if res else {}
         row["confidence"] = {f.name: f.confidence for f in res.fields} if res else {}
         job = self.store._one("SELECT error FROM jobs WHERE document_id=? ORDER BY created_at DESC LIMIT 1", (doc_id,))
         row["error"] = json.loads(job["error"]) if job and job["error"] else None
@@ -393,7 +393,7 @@ class InstanceService:
         rows, trows = [], {t.name: [] for t in tables}
         for d in docs:
             res = self.store.get_result(d["id"])
-            vals = {f.name: f.value for f in res.fields} if res else {}
+            vals = {f.name: f.out() for f in res.fields} if res else {}
             rows.append([d["id"], d["file_name"], d["status"], d["updated_at"], d["validated_by"] or ""] +
                         [_cell(vals.get(n)) for n in scalar])
             for t in tables:

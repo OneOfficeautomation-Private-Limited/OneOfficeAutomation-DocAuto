@@ -53,13 +53,21 @@ def _now() -> str:
 
 
 def _slug(name: str, fallback: str = "item") -> str:
+    """An id from a name: Latin letters and digits joined by -. A name with none (another script, such as
+    "فواتير الموردين") gets the fallback and a short random part, so two such names never share an id."""
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return (s or fallback)[:40]
+    return (s or f"{fallback}-{uuid.uuid4().hex[:8]}")[:40]
+
+
+def _field_name_ok(name: str) -> bool:
+    """A field name: letters of any script, digits and _, not starting with a digit (a Python identifier, so
+    checks such as 'total >= subtotal' can use it)."""
+    return bool(name) and name.isidentifier()
 
 
 def _snake(label: str) -> str:
-    s = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_").lower()
-    return s if re.match(r"[a-z_]", s or "") else ""
+    s = re.sub(r"[^\w]+", "_", label).strip("_").lower()
+    return s if s and (s[0].isalpha() or s[0] == "_") else ""
 
 
 # ================================================================== models
@@ -660,12 +668,12 @@ class DocFlowService:
         return DocType.model_validate_json(b)
 
     def _check_fields(self, fields: list[FieldDef]) -> None:
-        if not fields:
-            raise InvalidInput("add at least one field")
+        # a type may be saved with no fields yet (a draft); it only recognises documents until fields are added
         seen = set()
         for f in fields:
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", f.name or ""):
-                raise InvalidInput(f"field name '{f.name}' must use letters, digits and underscore")
+            if not _field_name_ok(f.name):
+                raise InvalidInput(f"field name '{f.name}' must use letters (any script), digits and underscore, "
+                                   "and not start with a digit")
             if f.name in seen:
                 raise InvalidInput(f"duplicate field '{f.name}'")
             seen.add(f.name)
@@ -744,7 +752,7 @@ class DocFlowService:
             if not 0 <= t <= 1:
                 raise InvalidInput("confidence thresholds must be between 0 and 1")
         for name, t in fl.review.fieldThresholds.items():
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name or ""):
+            if not _field_name_ok(name):
                 raise InvalidInput(f"field threshold: '{name}' is not a field name")
             if not 0 <= t <= 1:
                 raise InvalidInput(f"field threshold for '{name}' must be between 0 and 1")
@@ -922,7 +930,7 @@ class DocFlowService:
         if brief:
             return {"status": row["status"], "flowId": row["flowId"], "doctypeId": row["doctype_id"]}
         res = self.store.get_result(doc_id)
-        row["fields"] = {f.name: f.value for f in res.fields} if res else {}
+        row["fields"] = {f.name: f.out() for f in res.fields} if res else {}
         row["confidence"] = {f.name: f.confidence for f in res.fields} if res else {}
         row["locations"] = locations(res) if res else {}      # where each value is on the pages (review highlight)
         row["einvoice"] = res.einvoice if res else None       # e-invoice XML / QR data and its checks
@@ -1014,7 +1022,7 @@ class DocFlowService:
             fl = fl or self.flow(row["instance_id"])
             res = self.store.get_result(doc_id)
             payload = events.body(event, doc_id, fl.id, fl.name, status or row["status"], row.get("file_name"),
-                                  row.get("doctype_id"), {f.name: f.value for f in res.fields} if res else {})
+                                  row.get("doctype_id"), {f.name: f.out() for f in res.fields} if res else {})
             self.store.outbox_add("event", payload, doc_id, fl.id, event, wake=self.outbox.wake)
         except Exception:
             log.exception("event %s for %s failed", event, doc_id)
@@ -1289,7 +1297,7 @@ class DocFlowService:
         rows, cols = [], []
         for d in docs:
             res = self.store.get_result(d["id"])
-            vals = {f.name: f.value for f in res.fields} if res else {}
+            vals = {f.name: f.out() for f in res.fields} if res else {}
             for k in vals:
                 if k not in cols:
                     cols.append(k)
