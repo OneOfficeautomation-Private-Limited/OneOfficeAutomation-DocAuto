@@ -27,6 +27,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
+def env_number(key: str, default: float, low: float = 0, high: float = float("inf")) -> float:
+    """A number setting from the environment (DOCAUTO_...), within [low, high]; the default when unset or wrong."""
+    import os
+    try:
+        return max(low, min(high, float(os.environ.get(key) or default)))
+    except ValueError:
+        return default
+
+
 def _subst(value: Any, env: Mapping[str, str]) -> Any:
     if isinstance(value, str):
         out = _ENV.sub(lambda m: env.get(m.group(1)) or (m.group(2) or ""), value)

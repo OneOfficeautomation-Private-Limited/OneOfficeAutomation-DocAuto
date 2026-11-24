@@ -318,3 +318,15 @@ def test_company_headings_and_engine_languages():
     info.languages = ["en", "ar"]
     assert info.supports_languages(["en", "fr"]) and info.coverage(["en", "fr"]) == 0.5
     assert not info.supports_languages(["ja"])
+
+
+def test_reference_tables_in_more_formats():
+    from docauto.docflow import parse_table_file
+    head, rows = parse_table_file(b"code\tname\nS1\tAcme\nS2\tGlobex\n", "suppliers.tsv")
+    assert head == ["code", "name"] and rows[1] == {"code": "S2", "name": "Globex"}
+    head, rows = parse_table_file(b'[{"code": "S1", "vat": "DE1"}, {"code": "S2", "iban": "GB1"}]', "s.json")
+    assert head == ["code", "vat", "iban"] and rows[1] == {"code": "S2", "vat": "", "iban": "GB1"}
+    head, rows = parse_table_file(b"Supplier list 2026\ncode;name\nS1;Acme\n", "s.csv", header_row=2)
+    assert head == ["code", "name"] and rows == [{"code": "S1", "name": "Acme"}]
+    head, rows = parse_table_file(b"S1,Acme\nS2,Globex\n", "s.csv", header_row=0)
+    assert head == ["col1", "col2"] and len(rows) == 2

@@ -26,8 +26,27 @@ from ..pipeline import DocumentService, ProcessOptions
 
 API = "/api/docs/v1"
 
+def _max_upload_bytes() -> int:
+    """The largest request accepted (DOCAUTO_MAX_UPLOAD_MB, 200 MB by default): bigger uploads are refused before
+    they are read into memory."""
+    from ..config import env_number
+    return int(env_number("DOCAUTO_MAX_UPLOAD_MB", 200, 1, 100000) * 1024 * 1024)
+
+
 app = FastAPI(title="Oneoffice Document Automation", version=__version__,
               description="Pluggable OCR + IDP component: open-source, licensed/cloud and AI engine options.")
+
+
+@app.middleware("http")
+async def _refuse_too_large(request, call_next):
+    size = request.headers.get("content-length")
+    if size and size.isdigit() and int(size) > _max_upload_bytes():
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": f"The upload is larger than the limit of {_max_upload_bytes() // 1048576} MB "
+                                       "(setting DOCAUTO_MAX_UPLOAD_MB)"}, status_code=413)
+    return await call_next(request)
+
+
 app.add_middleware(tenants.TenantMiddleware)
 _services: dict[str, DocumentService] = {}   # one per tenant, each with its own data folder and routing
 _services_lock = threading.RLock()
@@ -758,6 +777,7 @@ class _Review(BaseModel):
     reviewer: str = "reviewer"
     fields: dict[str, Any] = {}
     action: str = "submit"
+    note: str = ""          # the reviewer's reason, kept with the document (why it was rejected...)
 
 
 @app.post(f"{DF}/documents/{{doc_id}}/review")
@@ -765,7 +785,7 @@ def df_review(doc_id: str, body: _Review, _: str = Depends(auth)):
     if body.action not in ("submit", "invalid"):
         raise HTTPException(400, "action must be 'submit' or 'invalid'")
     reviewer = tenants.current_user.get() or body.reviewer  # the platform's signed-in user, when it sends one
-    return docflow().review(doc_id, body.fields, reviewer, body.action)
+    return docflow().review(doc_id, body.fields, reviewer, body.action, body.note)
 
 
 class _Reclassify(BaseModel):
@@ -823,9 +843,9 @@ def ref_table_id(title: str, existing: list[dict], wanted: str = "") -> str:
 
 @app.post(f"{DF}/reftables")
 async def df_ref_upload(file: UploadFile = File(...), name: str = Form(""), id: str = Form(""),
-                        _: str = Depends(auth)):
+                        headerRow: int = Form(1), _: str = Depends(auth)):
     data = await file.read()
-    cols, rows = parse_table_file(data, file.filename or "table.csv")
+    cols, rows = parse_table_file(data, file.filename or "table.csv", headerRow)
     title = name.strip() or Path(file.filename or "table").stem
     ref_id = ref_table_id(title, service().store.ref_list(), id.strip())
     service().store.ref_save(ref_id, title, cols, rows)

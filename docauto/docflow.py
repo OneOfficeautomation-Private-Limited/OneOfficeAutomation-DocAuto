@@ -225,6 +225,12 @@ class ClassifySettings(BaseModel):
     mode: Literal["single", "auto"] = "single"   # single: every document is the flow's (first) doc type
     split: bool = False                          # split mixed batches into one document per part
     minScore: float = 2.0                        # below this a page is 'unclassified' -> Review Desk
+    # a document that fits none of the types: review (a person chooses the type), other (kept as an Other document,
+    # its text and labelled values, and delivered), reject (marked invalid, with the reason)
+    whenNoType: Literal["review", "other", "reject"] = "review"
+    # single mode: check the document looks like the process's type (its recognition words score minScore or more);
+    # one that does not is handled like a document that fits no type
+    checkType: bool = False
 
 
 class ReviewSettings(BaseModel):
@@ -313,6 +319,7 @@ LINE_ITEMS = _f("line_items", "table", "Line items", columns=[
     _f("amount", "currency", "Amount", aliases=["Line Total", "Net Amount", "Total", "Betrag", "Montant", "Importe", "Valor",
                                                  "Importo", "Bedrag", "المبلغ", "الإجمالي", "金额", "金額", "राशि"])])
 
+from .config import env_number  # noqa: E402
 from .words import CURRENCIES, ISO_CURRENCIES, TAX_ID_WORDS, TAX_WORDS  # noqa: E402  (word lists shared with instances)
 
 def _cur(name="currency"):
@@ -620,21 +627,71 @@ class RefData:
         return None
 
 
-def parse_table_file(data: bytes, file_name: str) -> tuple[list[str], list[dict]]:
-    if file_name.lower().endswith((".xlsx", ".xlsm")):
+def parse_table_file(data: bytes, file_name: str, header_row: int = 1) -> tuple[list[str], list[dict]]:
+    """A reference table from CSV / TSV / text (any of , ; tab | as separator), Excel (.xlsx, .xlsm), OpenDocument
+    (.ods) or JSON (a list of objects, or {"rows": [...]}). header_row: the row with the column names (1 = the first;
+    0 = none: the columns are named col1, col2...)."""
+    low = file_name.lower()
+    if low.endswith(".json"):
+        try:
+            obj = json.loads(data.decode("utf-8-sig"))
+        except ValueError as e:
+            raise InvalidInput(f"the JSON file cannot be read: {e}")
+        items = obj.get("rows", obj.get("data")) if isinstance(obj, dict) else obj
+        if not isinstance(items, list) or not all(isinstance(x, dict) for x in items) or not items:
+            raise InvalidInput("a JSON table is a list of objects, one per row")
+        head = list(dict.fromkeys(k for x in items for k in x))
+        return head, [{h: ("" if x.get(h) is None else str(x.get(h))) for h in head} for x in items]
+    if low.endswith((".xlsx", ".xlsm")):
         from openpyxl import load_workbook
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
         ws = wb.active
         rows = [[("" if c is None else str(c)).strip() for c in r] for r in ws.iter_rows(values_only=True)]
+    elif low.endswith(".ods"):
+        rows = _ods_rows(data)
     else:
         text = data.decode("utf-8-sig", errors="replace")
-        dialect = csv.Sniffer().sniff(text[:2000], delimiters=",;\t") if text.strip() else csv.excel
+        try:
+            # the separator from the rows from the heading row on (a title line above it has none)
+            sample = "\n".join(text.splitlines()[max(0, header_row - 1):][:30])[:4000]
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|") if sample.strip() else csv.excel
+        except csv.Error:
+            dialect = csv.excel_tab if "\t" in text[:2000] else csv.excel
         rows = [[c.strip() for c in r] for r in csv.reader(io.StringIO(text), dialect)]
     rows = [r for r in rows if any(r)]
     if not rows:
         raise InvalidInput("the file is empty")
-    head = [h or f"col{i + 1}" for i, h in enumerate(rows[0])]
-    return head, [dict(zip(head, r)) for r in rows[1:]]
+    if header_row <= 0:
+        width = max(len(r) for r in rows)
+        head = [f"col{i + 1}" for i in range(width)]
+        return head, [dict(zip(head, r)) for r in rows]
+    if header_row > len(rows):
+        raise InvalidInput(f"the file has {len(rows)} rows, so row {header_row} cannot hold the column names")
+    head = [h or f"col{i + 1}" for i, h in enumerate(rows[header_row - 1])]
+    return head, [dict(zip(head, r)) for r in rows[header_row:]]
+
+
+def _ods_rows(data: bytes) -> list[list[str]]:
+    """The first sheet of an OpenDocument spreadsheet, read with the standard library (zip + XML)."""
+    import xml.etree.ElementTree as ETree
+    import zipfile
+    ns = {"table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0", "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0"}
+    try:
+        root = ETree.fromstring(zipfile.ZipFile(io.BytesIO(data)).read("content.xml"))
+    except (zipfile.BadZipFile, KeyError, ETree.ParseError):
+        raise InvalidInput("the .ods file cannot be read")
+    sheet = root.find(".//table:table", ns)
+    rows = []
+    for tr in (sheet.findall(".//table:table-row", ns) if sheet is not None else []):
+        row = []
+        for tc in tr.findall("table:table-cell", ns):
+            n = int(tc.get("{%s}number-columns-repeated" % ns["table"], "1"))
+            text = " ".join("".join(p.itertext()) for p in tc.findall("text:p", ns)).strip()
+            row.extend([text] * min(n, 200))
+        while row and not row[-1]:
+            row.pop()
+        rows.append(row)
+    return rows
 
 
 # ================================================================== classification & split
@@ -1134,6 +1191,29 @@ class DocFlowService:
                 dt = self.doctype(opt.doctypeId)
             except InvalidInput:
                 dt = None
+        if dt is not None and fl.classify.checkType and fl.classify.mode == "single":
+            _, score, _ = classify_page(result.text or "", [dt])
+            if score < fl.classify.minScore:
+                result.warnings.append(f"Does not look like {dt.name}: its recognition words are missing")
+                dt = None
+        if dt is None and fl.classify.whenNoType == "reject":
+            result.review.required, result.review.status = False, ReviewStatus.not_required
+            result.warnings.append("Not one of this process's document types: rejected")
+            self.store.save_result(result)
+            self.store.set_doc_fields(doc_id, flags=json.dumps([{"rule": "classification", "type": "classify",
+                                                                 "action": "reject", "message": "Document type not recognised"}]))
+            return "invalid"
+        if dt is None and fl.classify.whenNoType == "other":
+            try:
+                other = self.doctype("other")
+            except InvalidInput:
+                other = None
+            if other is not None:
+                result.warnings.append("Not one of this process's document types: kept as Other document")
+                result.review.required, result.review.status = False, ReviewStatus.not_required
+                self.store.save_result(result)
+                self.store.set_doc_fields(doc_id, doctype_id=other.id, flags="[]")
+                return "success"
         if dt is None:
             result.review.required, result.review.status = True, ReviewStatus.pending
             result.warnings.append("Unclassified: choose the document type in One Desk")
@@ -1223,13 +1303,16 @@ class DocFlowService:
         return _merge_reasons(_flag_reasons(flags), review_reasons(res, dt.schema(), rv.fieldConfidence,
                                                                    rv.documentConfidence, rv.fieldThresholds))
 
-    def review(self, doc_id: str, fields: dict, reviewer: str, action: str = "submit") -> dict:
+    def review(self, doc_id: str, fields: dict, reviewer: str, action: str = "submit", note: str = "") -> dict:
         row = self.store.doc_row(doc_id)
         if not row:
             raise InvalidInput(f"unknown document '{doc_id}'")
         if row["status"] not in ("validation", "success", "validated", "invalid"):
             raise InvalidInput(f"document is '{row['status']}' and cannot be reviewed")
-        self.svc.complete_review(doc_id, fields, reviewer, reject=(action == "invalid"))
+        res = self.svc.complete_review(doc_id, fields, reviewer, reject=(action == "invalid"))
+        if note.strip() and res is not None:   # the reviewer's reason (why it was rejected, what was checked)
+            res.warnings.append(("Rejected: " if action == "invalid" else "Reviewer note: ") + note.strip()[:500])
+            self.store.save_result(res)
         return {**self.document(doc_id), "nextDocumentId": self.store.next_for_validation(row.get("instance_id"))}
 
     def reclassify(self, doc_id: str, dt_id: str) -> dict:
@@ -1419,8 +1502,15 @@ class DocFlowService:
                         headers.update(extra)
                 if dv.params.get("authHeader"):
                     headers["Authorization"] = dv.params["authHeader"]
+                extra = dv.params.get("headers") or {}
+                if isinstance(extra, dict):   # own headers of a web address delivery (an API key header, a tenant id...)
+                    headers.update({str(k): str(v) for k, v in extra.items() if str(k).strip()})
+                method = str(dv.params.get("method") or "POST").upper()
+                if method not in ("POST", "PUT", "PATCH"):
+                    method = "POST"
                 try:
-                    r = httpx.post(url, json=body, headers=headers, timeout=15)
+                    send = httpx.post if method == "POST" else (lambda *a, **k: httpx.request(method, *a, **k))
+                    r = send(url, json=body, headers=headers, timeout=env_number("DOCAUTO_WEBHOOK_TIMEOUT", 15, 1, 600))
                 except httpx.HTTPError as e:
                     return False, f"{type(e).__name__}: {e}", True
                 ok = r.status_code < 300
@@ -1613,11 +1703,12 @@ class DocFlowService:
             return []
         if not src.is_dir():
             return []
-        done = src / "processed"
+        done = src / (os.environ.get("DOCAUTO_PROCESSED_FOLDER") or "processed")
         done.mkdir(exist_ok=True)
+        settle = env_number("DOCAUTO_FILE_SETTLE_SECONDS", 2, 0, 600)   # a file still being copied is left until then
         out = []
         for p in sorted(src.iterdir()):
-            if not p.is_file() or p.suffix.lower() not in SUPPORTED_EXT or time.time() - p.stat().st_mtime < 2:
+            if not p.is_file() or p.suffix.lower() not in SUPPORTED_EXT or time.time() - p.stat().st_mtime < settle:
                 continue
             try:
                 data = p.read_bytes()
@@ -1725,7 +1816,8 @@ class DocFlowService:
                         httpx.post(fl.review.slaWebhook, json={"event": "review.overdue", "flowId": fl.id,
                                                                "flowName": fl.name, "documentId": d["id"],
                                                                "fileName": d["file_name"], "receivedAt": d["created_at"],
-                                                               "slaHours": fl.review.slaHours}, timeout=10)
+                                                               "slaHours": fl.review.slaHours},
+                                                               timeout=env_number("DOCAUTO_WEBHOOK_TIMEOUT", 15, 1, 600))
                     except httpx.HTTPError:
                         log.warning("SLA webhook failed for %s", d["id"])
                 with self.store.tx():
@@ -1761,9 +1853,10 @@ class DocFlowService:
             if self._stop.wait(3600):
                 return
 
-    def start_watcher(self, interval: float = 5.0) -> None:
+    def start_watcher(self, interval: Optional[float] = None) -> None:
         if self._watcher and self._watcher.is_alive():
             return
+        interval = interval or env_number("DOCAUTO_WATCH_SECONDS", 5, 1, 3600)
 
         def loop():
             last_sla = 0.0

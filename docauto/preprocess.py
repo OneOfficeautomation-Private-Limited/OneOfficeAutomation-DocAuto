@@ -14,7 +14,8 @@ from PIL import Image, ImageOps
 from .errors import InvalidInput
 
 RENDER_DPI = 300
-MAX_PAGES = 500
+MAX_PAGES = 500   # the default of DOCAUTO_MAX_PAGES
+from .config import env_number  # noqa: E402
 # PDFium (pypdfium2) is not thread-safe: every use in DocFlow holds this lock (several jobs run at once)
 PDFIUM_LOCK = threading.RLock()
 
@@ -57,8 +58,9 @@ def _pdf_pages(data: bytes, pages: Optional[list[int]]) -> tuple[list[Image.Imag
         pdf = pdfium.PdfDocument(data)
         try:
             n = len(pdf)
-            if n > MAX_PAGES:
-                raise InvalidInput(f"PDF has {n} pages, limit is {MAX_PAGES}")
+            limit = int(env_number("DOCAUTO_MAX_PAGES", MAX_PAGES, 1))
+            if n > limit:
+                raise InvalidInput(f"PDF has {n} pages, the limit is {limit} (setting DOCAUTO_MAX_PAGES)")
             wanted = [p for p in (pages or range(1, n + 1)) if 1 <= p <= n]
             images, native = [], []
             for pno in wanted:

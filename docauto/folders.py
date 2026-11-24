@@ -138,6 +138,6 @@ def check_name(name: str) -> str:
     """A new folder's name, cleaned; raises ValueError when it cannot be a folder name."""
     name = (name or "").strip().rstrip(". ")
     if not name or name in (".", "..") or len(name) > 120 or _BAD_NAME.search(name) \
-            or name.split(".")[0].upper() in _RESERVED:
+            or (os.name == "nt" and name.split(".")[0].upper() in _RESERVED):   # CON, PRN...: Windows only
         raise ValueError("Use a folder name without \\ / : * ? \" < > |, up to 120 characters")
     return name
