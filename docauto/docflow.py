@@ -48,6 +48,14 @@ SUPPORTED_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".web
 INBOX_ID = "smart-inbox"
 
 
+def teach_max_samples() -> int:
+    """How many example files Teach from samples reads (DOCAUTO_TEACH_MAX_SAMPLES, 5 by default, 1 to 20)."""
+    try:
+        return max(1, min(20, int(os.environ.get("DOCAUTO_TEACH_MAX_SAMPLES") or 5)))
+    except ValueError:
+        return 5
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -637,7 +645,7 @@ def infer_type(values: list[str]) -> str:
 
 
 def suggest_from_results(results: list[DocumentResult]) -> dict:
-    """Heuristic proposal of a Doc Type from OCR results of 1-3 samples (no AI needed)."""
+    """Heuristic proposal of a Doc Type from OCR results of a few samples (no AI needed)."""
     found: dict[str, dict] = {}
     texts = []
     for r in results:
@@ -1402,7 +1410,7 @@ class DocFlowService:
         if not files:
             raise InvalidInput("upload 1 to 3 sample documents")
         results = []
-        for data, name in files[:3]:
+        for data, name in files[:teach_max_samples()]:
             results.append(self.svc.process_bytes(data, name, ProcessOptions(languages=["en", "ar"])))
         proposal = suggest_from_results(results)
         llm = next((p for p in self.svc.registry.available("extraction")

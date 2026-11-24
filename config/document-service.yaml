@@ -22,7 +22,7 @@ providers:
     azure-di:
       config:
         endpoint: ${AZURE_DI_ENDPOINT}
-        region: ${AZURE_DI_REGION:-westeurope}
+        region: ${AZURE_DI_REGION:-}
         apiVersion: "2024-11-30"
       credentials:
         apiKey: ${AZURE_DI_KEY}
@@ -35,7 +35,7 @@ providers:
     google-docai:
       config:
         projectId: ${GCP_PROJECT:-}
-        location: ${DOCAI_LOCATION:-eu}
+        location: ${DOCAI_LOCATION:-us}
         ocrProcessorId: ${DOCAI_OCR_PROCESSOR:-}
         formProcessorId: ${DOCAI_FORM_PROCESSOR:-}
       credentials:

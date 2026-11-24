@@ -77,7 +77,7 @@ class GoogleDocumentAiProvider(OcrProvider):
         self.location = cfg.get("location", "us")
         self.ocr_processor = cfg.get("ocrProcessorId")
         self.form_processor = cfg.get("formProcessorId")
-        self.info.regions = [self.location]
+        self.info.regions = [self.location] if self.location else []
 
     def health_check(self) -> HealthStatus:
         try:

@@ -57,6 +57,15 @@ DEFAULTS = [
      "help": "National ID / Iqama numbers, IBANs, phone numbers and e-mails are replaced by placeholders before text "
              "goes to a cloud AI model, and restored in the results. Page images cannot be masked: with this on they "
              "are only sent when a process allows images. Local engines are never masked."},
+    {"key": "DOCAUTO_PRICE_CURRENCY", "label": "Currency for prices and cost estimates", "type": "text", "default": "USD",
+     "help": "An ISO currency code (USD, EUR, INR, SAR, JPY...). List prices are in US dollars and converted at the rate below."},
+    {"key": "DOCAUTO_PRICE_RATE", "label": "1 US dollar in that currency", "type": "number", "default": "1",
+     "help": "For example 0.92 for EUR or 83 for INR. Own prices below are already in the chosen currency."},
+    {"key": "DOCAUTO_PRICES", "label": "Own prices per 1,000 pages", "type": "text", "default": "", "allowEmpty": True,
+     "help": "Contract prices that replace list prices: engine.ocr=price or engine.extract=price, separated by ; "
+             "(e.g. azure-di.ocr=1.2; claude-haiku-5-5.extract=0.6). Also prices engines or models with no list price."},
+    {"key": "DOCAUTO_TEACH_MAX_SAMPLES", "label": "Most example files for Teach from samples", "type": "number",
+     "default": "5", "help": "More examples find more fields; each is read once (local engines: free)."},
     {"key": "DOCAUTO_OFFERED_LANGUAGES", "label": "Languages offered for document types", "type": "text",
      "default": "en,ar", "help": "Language codes, comma separated (en, ar, ur, hi, fr, zh...). People choose a "
                                  "document type's languages from these; GET /df/languages lists what the OCR "
@@ -81,11 +90,13 @@ ENGINES: dict[str, dict[str, Any]] = {
         {"key": "AZURE_DI_ENDPOINT", "label": "Endpoint", "type": "text", "default": "",
          "placeholder": "https://<resource>.cognitiveservices.azure.com"},
         {"key": "AZURE_DI_KEY", "label": "Key", "type": "secret", "default": ""},
-        {"key": "AZURE_DI_REGION", "label": "Region", "type": "text", "default": "westeurope",
-         "help": "Used by the residency policy, e.g. uaenorth."}], "install": None},
+        {"key": "AZURE_DI_REGION", "label": "Region", "type": "text", "default": "", "allowEmpty": True,
+         "help": "The Azure region of the resource, e.g. westeurope, uaenorth, centralindia, eastus. Used by the "
+                 "residency policy; empty = not known, so a policy that limits regions does not use it."}], "install": None},
     "google-docai": {"fields": [
         {"key": "GCP_PROJECT", "label": "GCP project id", "type": "text", "default": ""},
-        {"key": "DOCAI_LOCATION", "label": "Location", "type": "select", "options": ["us", "eu"], "default": "eu"},
+        {"key": "DOCAI_LOCATION", "label": "Location", "type": "text", "default": "us", "suggestions": ["us", "eu"],
+         "help": "The processor's location: us, eu, or another location Google offers for Document AI."},
         {"key": "DOCAI_OCR_PROCESSOR", "label": "Document OCR processor id", "type": "text", "default": ""},
         {"key": "DOCAI_FORM_PROCESSOR", "label": "Form Parser processor id", "type": "text", "default": ""},
         {"key": "GOOGLE_APPLICATION_CREDENTIALS", "label": "Service-account JSON path", "type": "path", "default": ""}],

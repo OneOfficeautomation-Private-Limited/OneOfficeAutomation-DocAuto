@@ -75,7 +75,10 @@ class PaddleOcrProvider(OcrProvider):
                         yield poly, text, float(sc)
 
     def recognize(self, req: RecognizeRequest) -> DocumentResult:
-        lang = LANG_MAP.get((req.languages or ["en"])[0], "en")
+        # one model per script: a model for another script (Arabic, Cyrillic, Devanagari...) also reads Latin
+        # letters, so for ["en", "ar"] the Arabic model reads both; English alone uses the English model
+        known = [LANG_MAP[c] for c in (req.languages or ["en"]) if c in LANG_MAP]
+        lang = next((m for m in known if m != "en"), known[0] if known else "en")
         doc = DocumentResult(documentId=req.document_id)
         for pno, img in enumerate(req.pages, 1):
             W, H = img.size

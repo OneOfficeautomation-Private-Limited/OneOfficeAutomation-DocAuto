@@ -362,7 +362,8 @@ def costs(pages: int = 10000, cloudShare: float = 0.2, extractShare: float = 0.3
     opted_in = svc.policy.cloud_opt_in if optIn is None else optIn
     return {"prices": costs_mod.price_table(svc.config, [p.info.id for p in svc.registry.providers.values()]),
             "claudeModel": configured, "claudeEscalationModel": costs_mod.claude_escalation_model(svc.config),
-            "cloudOptIn": svc.policy.cloud_opt_in,
+            "cloudOptIn": svc.policy.cloud_opt_in, "currency": costs_mod.currency(),
+            "modelPrices": {m: costs_mod.price_per_1000("claude", "extract", m) for m in costs_mod.CLAUDE_USD_PER_MTOK},
             "estimate": costs_mod.estimate(pages, cloudShare, extractShare, cloudOcr or None, extraction,
                                            model or configured, opted_in)}
 

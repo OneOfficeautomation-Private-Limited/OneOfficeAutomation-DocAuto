@@ -6,6 +6,8 @@ inside DocFlow stays in credits (manifest creditCostPerPage); this is for planni
 """
 from __future__ import annotations
 
+import os
+import re
 from typing import Optional
 
 # engine id -> {"ocr": usd per 1,000 pages read, "extract": usd per 1,000 pages with field extraction}
@@ -34,11 +36,43 @@ def claude_per_1000(model: str) -> Optional[float]:
     return round(1000 * (t["input"] * inp + t["output"] * out) / 1e6, 2)
 
 
+def currency() -> str:
+    """The currency prices are shown in (DOCAUTO_PRICE_CURRENCY, an ISO code; USD by default)."""
+    return (os.environ.get("DOCAUTO_PRICE_CURRENCY") or "USD").strip().upper()[:3] or "USD"
+
+
+def rate() -> float:
+    """How much of the price currency one US dollar buys (DOCAUTO_PRICE_RATE; 1 for USD)."""
+    try:
+        return max(0.0, float(os.environ.get("DOCAUTO_PRICE_RATE") or 1))
+    except ValueError:
+        return 1.0
+
+
+def overrides() -> dict[tuple[str, str], float]:
+    """Own prices per 1,000 pages, in the price currency, from DOCAUTO_PRICES: "engine.use=price" pairs separated by
+    commas or semicolons, e.g. "azure-di.ocr=1.2; claude-haiku-5-5.extract=0.6; my-engine.extract=4". A contract
+    price, or a price for an engine or model with no list price."""
+    out = {}
+    for part in re.split(r"[;,\n]", os.environ.get("DOCAUTO_PRICES") or ""):
+        m = re.fullmatch(r"\s*([\w.-]+?)\.(ocr|extract)\s*=\s*([\d.]+)\s*", part)
+        if m:
+            out[(m.group(1), m.group(2))] = float(m.group(3))
+    return out
+
+
 def price_per_1000(engine: str, use: str, model: Optional[str] = None) -> Optional[float]:
-    """use: 'ocr' or 'extract'. None = no list price known (BYOK contract, template engine...)."""
-    if engine == "claude":
-        return claude_per_1000(model or DEFAULT_CLAUDE_MODEL) if use == "extract" else None
-    return LIST_PRICES.get(engine, {}).get(use)
+    """use: 'ocr' or 'extract', in the price currency. None = no price known (BYOK contract, template engine...).
+    An own price (DOCAUTO_PRICES) wins; list prices are in USD and converted at DOCAUTO_PRICE_RATE."""
+    own = overrides()
+    key = (model or DEFAULT_CLAUDE_MODEL) if engine == "claude" else engine
+    if (key, use) in own:
+        return own[(key, use)]
+    if (engine, use) in own:
+        return own[(engine, use)]
+    usd = (claude_per_1000(model or DEFAULT_CLAUDE_MODEL) if use == "extract" else None) if engine == "claude" \
+        else LIST_PRICES.get(engine, {}).get(use)
+    return None if usd is None else round(usd * rate(), 4)
 
 
 def _claude_config(config: dict) -> dict:

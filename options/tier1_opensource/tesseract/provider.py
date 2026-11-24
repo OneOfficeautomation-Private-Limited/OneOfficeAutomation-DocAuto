@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import io
+import logging
 
 from docauto import languages
 from docauto.errors import ProviderError, ProviderUnavailable
 from docauto.models import DocumentResult, Line, Page, Word
 from docauto.normalize import bbox_from_pixels, conf100, detect_direction, union_bbox
 from docauto.provider import HealthStatus, OcrProvider, RecognizeRequest
+
+log = logging.getLogger("docauto.tesseract")
 
 LANG_MAP = languages.TESSERACT   # "en" -> "eng", "ar" -> "ara", "zh" -> "chi_sim", ...
 
@@ -73,11 +76,19 @@ class TesseractProvider(OcrProvider):
         return [c for c in dict.fromkeys(languages.from_tesseract(t) for t in sorted(self.installed_langs)) if c]
 
     def _check_langs(self, langs: list[str]) -> str:
+        """The languages to read with: those whose data is installed. A missing one is left out with a warning
+        (reading the others is better than reading nothing); only when none is installed is the engine unusable."""
         code = tess_langs(langs)
-        missing = [c for c in code.split("+") if getattr(self, "installed_langs", None) and c not in self.installed_langs]
-        if missing:
+        have = getattr(self, "installed_langs", None)
+        if not have:
+            return code
+        parts = code.split("+")
+        missing = [c for c in parts if c not in have]
+        if missing and len(missing) == len(parts):
             raise ProviderUnavailable(f"tesseract language data missing: {missing}", self.info.id)
-        return code
+        if missing:
+            log.warning("tesseract: no language data for %s; reading with %s", missing, [c for c in parts if c in have])
+        return "+".join(c for c in parts if c in have)
 
     def recognize(self, req: RecognizeRequest) -> DocumentResult:
         import pytesseract
