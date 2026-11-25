@@ -687,6 +687,21 @@ async def df_upload(flow_id: str, files: list[UploadFile] = File(...), wait: boo
     return {"documents": out}
 
 
+class _Example(BaseModel):
+    documentId: str
+
+
+@app.post(f"{DF}/doctypes/{{dt_id}}/examples")
+def df_add_example(dt_id: str, body: _Example, _: str = Depends(auth)):
+    """Make an approved document a teaching example of the type: AI reading sees its right values."""
+    return docflow().add_example(dt_id, body.documentId)
+
+
+@app.delete(f"{DF}/doctypes/{{dt_id}}/examples/{{doc_id}}")
+def df_remove_example(dt_id: str, doc_id: str, _: str = Depends(auth)):
+    return docflow().remove_example(dt_id, doc_id)
+
+
 class _Improve(BaseModel):
     runId: Optional[str] = None
 

@@ -87,6 +87,8 @@ DEFAULTS = [
      "help": "Inside each watched folder; files read are moved there."},
     {"key": "DOCAUTO_WEBHOOK_TIMEOUT", "label": "Web address deliveries: wait for an answer (seconds)", "type": "number",
      "default": "15"},
+    {"key": "DOCAUTO_CORRECTIONS_REMEMBERED", "label": "Reviewer corrections AI reading learns from", "type": "number",
+     "default": "8", "help": "The newest corrections of a document type, shown to AI reading as examples. 0: none."},
     {"key": "DOCAUTO_TEACH_MAX_SAMPLES", "label": "Most example files for Teach from samples", "type": "number",
      "default": "5", "help": "More examples find more fields; each is read once (local engines: free)."},
     {"key": "DOCAUTO_OFFERED_LANGUAGES", "label": "Languages offered for document types", "type": "text",

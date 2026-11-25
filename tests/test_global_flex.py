@@ -407,3 +407,27 @@ def test_improve_instructions_from_a_test_run(monkeypatch):
     assert "total" not in p                                    # read right: no new instruction
     assert df.doctype("invoice").fields[0].description in (None, "")   # nothing saved
     svc.close()
+
+
+def test_teaching_examples_reach_ai_reading(monkeypatch):
+    from tests.conftest import make_config
+    from tests.test_einvoice import invoice_pdf
+    from docauto.docflow import DocFlowService, Flow
+    from docauto.errors import InvalidInput
+    from docauto.pipeline import DocumentService
+    import pytest
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    svc = DocumentService(make_config())
+    df = DocFlowService(svc)
+    fl = df.save_flow(Flow(name="AP", docTypes=["invoice"]), new=True)
+    d = df.upload(fl.id, invoice_pdf(["ACME Trading Co.", "Invoice", "Invoice Number: INV-9", "Total: 10.00 EUR"]), "a.pdf", wait=True)
+    doc = d["documentId"]
+    df.review(doc, {"invoice_number": "INV-0009"}, "qa")
+    df.add_example("invoice", doc)
+    text = df._options(fl, df.doctype("invoice"), "upload").instructions
+    assert "Right values of approved documents" in text and "INV-0009" in text
+    df.remove_example("invoice", doc)
+    assert not df.doctype("invoice").examples
+    with pytest.raises(InvalidInput):
+        df.add_example("invoice", "no-such-document")
+    svc.close()

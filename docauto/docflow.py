@@ -184,6 +184,8 @@ class DocType(BaseModel):
     fields: list[FieldDef] = Field(default_factory=list)
     checks: list[str] = Field(default_factory=list)     # cross-field expressions
     learning: LearnedLabels = Field(default_factory=LearnedLabels)
+    # teaching examples: approved documents whose right values AI reading sees as examples (like labelled samples)
+    examples: list[str] = Field(default_factory=list)
     version: int = 1
     createdAt: str = ""
     updatedAt: str = ""
@@ -1128,12 +1130,16 @@ class DocFlowService:
     # ---------------------------------------------------------------- intake
     def _options(self, fl: Flow, dt: Optional[DocType], source: str, **extra) -> ProcessOptions:
         instructions = None
+        parts = []
         if dt and dt.learning.enabled:
-            recent = self.store.corrections(dt.id, limit=8)
+            recent = self.store.corrections(dt.id, limit=int(env_number("DOCAUTO_CORRECTIONS_REMEMBERED", 8, 0, 100)))
             if recent:
-                instructions = "Recent reviewer corrections for this document type (learn from them):\n" + "\n".join(
+                parts.append("Recent reviewer corrections for this document type (learn from them):\n" + "\n".join(
                     f"- {c['field']}: extracted {json.dumps(c['original'], ensure_ascii=False)}, corrected to "
-                    f"{json.dumps(c['corrected'], ensure_ascii=False)}" for c in recent)
+                    f"{json.dumps(c['corrected'], ensure_ascii=False)}" for c in recent))
+        if dt and dt.examples:
+            parts.append(self._example_text(dt))
+        instructions = "\n\n".join(p for p in parts if p) or None
         return ProcessOptions(
             ocrProvider=fl.engine.ocrProvider,
             extractionProvider=(fl.engine.extractionByType.get(dt.id) if dt else None) or fl.engine.extractionProvider,
@@ -1309,6 +1315,36 @@ class DocFlowService:
         rv = fl.review if fl else ReviewSettings()
         return _merge_reasons(_flag_reasons(flags), review_reasons(res, dt.schema(), rv.fieldConfidence,
                                                                    rv.documentConfidence, rv.fieldThresholds))
+
+    def _example_text(self, dt: DocType) -> str:
+        """The teaching examples as AI reading sees them: each approved document's right values (no page text)."""
+        lines = []
+        for doc_id in dt.examples[:10]:
+            res = self.store.get_result(doc_id)
+            if not res:
+                continue
+            vals = {f.name: f.value for f in res.fields if f.value not in (None, "", []) and f.type != "table"}
+            if vals:
+                lines.append("- " + json.dumps(vals, ensure_ascii=False, default=str))
+        return ("Right values of approved documents of this type (examples of what to read):\n" + "\n".join(lines)) if lines else ""
+
+    def add_example(self, dt_id: str, doc_id: str) -> DocType:
+        """Make an approved document a teaching example of its type (at most 10; the oldest goes)."""
+        dt = self.doctype(dt_id)
+        row = self.store.doc_row(doc_id)
+        if not row or row["status"] not in ("validated", "success"):
+            raise InvalidInput("only a document that is done or approved can be a teaching example")
+        if doc_id not in dt.examples:
+            dt.examples = (dt.examples + [doc_id])[-10:]
+            self.save_doctype(dt)
+        return dt
+
+    def remove_example(self, dt_id: str, doc_id: str) -> DocType:
+        dt = self.doctype(dt_id)
+        if doc_id in dt.examples:
+            dt.examples = [d for d in dt.examples if d != doc_id]
+            self.save_doctype(dt)
+        return dt
 
     def month_spend(self, flow_id: str) -> float:
         """What the process's documents cost this calendar month on cloud and AI engines, in the price currency
