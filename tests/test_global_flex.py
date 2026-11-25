@@ -378,3 +378,32 @@ def test_monthly_budget_switches_to_local_engines(monkeypatch):
     fl.engine.extractionByType = {"invoice": "claude"}
     assert df._options(fl, df.doctype("invoice"), "upload").extractionProvider == "claude"
     svc.close()
+
+
+def test_improve_instructions_from_a_test_run(monkeypatch):
+    import json as _json
+    from types import SimpleNamespace
+    from tests.conftest import make_config
+    from tests.test_einvoice import invoice_pdf
+    from docauto.docflow import DocFlowService
+    from docauto.pipeline import DocumentService
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    svc = DocumentService(make_config())
+    df = DocFlowService(svc)
+    s = df.testsets.create("Invoices", "invoice")
+    pdf = invoice_pdf(["ACME Trading Co.", "Invoice", "Invoice Number: INV-1", "Total: 100.00 EUR"])
+    df.testsets.add_file(s["id"], pdf, "a.pdf", {"invoice_number": "INV-0001", "total": "100.00"})
+    df.testsets.start_run(s["id"], [{"ocr": "auto", "extraction": "builtin-rules"}], wait=True)
+    seen = {}
+
+    def chat(prompt):
+        seen["prompt"] = prompt
+        return _json.dumps({"fields": {"invoice_number": "The number after 'Invoice Number', with its leading zeros"}})
+    llm = SimpleNamespace(info=SimpleNamespace(id="fake-ai", runsLocally=True), instance=SimpleNamespace(_chat=chat))
+    out = df.testsets.improve(s["id"], llm=llm)
+    p = {x["name"]: x for x in out["proposals"]}
+    assert "invoice_number" in p and "leading zeros" in p["invoice_number"]["proposed"]
+    assert p["invoice_number"]["examples"][0]["right"] == "INV-0001" and "INV-0001" in seen["prompt"]
+    assert "total" not in p                                    # read right: no new instruction
+    assert df.doctype("invoice").fields[0].description in (None, "")   # nothing saved
+    svc.close()

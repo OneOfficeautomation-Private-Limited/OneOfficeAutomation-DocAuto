@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import benchmark as bm
-from . import costs
+from . import costs, pii
 from .errors import DocAutoError, InvalidInput
 from .preprocess import sniff_mime
 from .store import worker_id
@@ -296,10 +296,64 @@ class TestSets:
                 return f"{eid}: {p.reason or 'not available'}"
         return None
 
+    def improve(self, set_id: str, run_id: Optional[str] = None, llm=None) -> dict:
+        """Better field instructions from a test run (like blueprint instruction optimisation): for every field that
+        was read wrong in the run, an AI reading engine sees the field's instruction and the right and wrong values,
+        and proposes a clearer instruction. Nothing is saved: the person applies the ones they want, then runs the
+        test again to compare."""
+        s = self._set(set_id)
+        dt = self.df.doctype(s["doctype_id"])
+        run = self.run_detail(set_id, run_id) if run_id else next(
+            (self.run_detail(set_id, r["id"]) for r in self.runs(set_id, 10) if r["status"] == "completed"), None)
+        if run is None:
+            raise InvalidInput("run the test set first: the instructions are improved from what it read wrong")
+        misses: dict[str, list[dict]] = {}
+        for row in run.get("rows", []):
+            for name, f in (row.get("fields") or {}).items():
+                if not f.get("ok") and f.get("want") not in (None, ""):
+                    misses.setdefault(name, []).append({"right": f.get("want"), "read": f.get("got")})
+        defs = {f.name: f for f in dt.fields}
+        wrong = [n for n in misses if n in defs]
+        out = {"runId": run["id"], "docType": dt.id, "proposals": []}
+        if not wrong:
+            return out
+        if llm is None:
+            llm = next((p for p in self.svc.registry.available("extraction")
+                        if p.info.optionPack == "tier3_ai" and self.svc.policy.allows(p.info)
+                        and hasattr(p.instance, "_chat")), None)
+        if llm is None:
+            raise InvalidInput("Improve with AI needs an AI reading engine that is ready (Claude, a cloud or a "
+                               "self-hosted model): set one up on the Engines page")
+        examples = {n: misses[n][:5] for n in wrong}
+        masker = pii.PiiMasker() if (not llm.info.runsLocally and self.svc.mask_pii_default) else None
+        show = (lambda v: masker.mask(str(v)) if masker and v is not None else v)
+        lines = []
+        for n in wrong:
+            f = defs[n]
+            lines.append(json.dumps({"field": n, "type": f.type, "label": f.label, "instruction": f.description or "",
+                                     "examples": [{"right": show(e["right"]), "read": show(e["read"])} for e in examples[n]]},
+                                    ensure_ascii=False))
+        prompt = ("You improve the instructions an AI follows when it reads fields from business documents of the type "
+                  f"'{dt.name}'. For each field below you get its current instruction and examples where the reading "
+                  "was wrong (right value, value read). Write one clear sentence per field that would make the right "
+                  "value come out: say where it is on the document, what it looks like, and what to leave out. Do not "
+                  "copy the example values. Reply with JSON only: {\"fields\": {\"<field>\": \"<instruction>\"}}.\n\n"
+                  + "\n".join(lines))
+        m = re.search(r"\{.*\}", llm.instance._chat(prompt), re.S)
+        got = (json.loads(m.group(0)).get("fields") or {}) if m else {}
+        for n in wrong:
+            text = str(got.get(n) or "").strip()
+            if text:
+                f = defs[n]
+                out["proposals"].append({"name": n, "label": (f.label or n).split(" / ")[0], "current": f.description or "",
+                                         "proposed": text[:400], "wrong": len(misses[n]), "examples": examples[n]})
+        out["engine"] = llm.info.id
+        return out
+
     def _evaluate(self, ts, dt, fl, combo: dict, item: dict, types: dict) -> dict:
         from .pipeline import ProcessOptions
         opt = ProcessOptions(ocrProvider=combo["ocr"], extractionProvider=combo["extraction"], strictProvider=True,
-                             languages=dt.languages or ["en"], schema=dt.schema(), tenantId=self.df.tenant,
+                             languages=dt.languages or self.df.offered_languages(), schema=dt.schema(), tenantId=self.df.tenant,
                              source="testset", **(self.df._options(fl, dt, "testset").model_dump(
                                  include={"fieldThreshold", "docThreshold", "fieldThresholds", "maskPii",
                                           "cloudImages", "einvoiceFirst"}) if fl else {}))

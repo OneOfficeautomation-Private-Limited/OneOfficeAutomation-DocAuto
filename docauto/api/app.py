@@ -687,6 +687,16 @@ async def df_upload(flow_id: str, files: list[UploadFile] = File(...), wait: boo
     return {"documents": out}
 
 
+class _Improve(BaseModel):
+    runId: Optional[str] = None
+
+
+@app.post(f"{DF}/testsets/{{set_id}}/improve")
+def df_testset_improve(set_id: str, body: _Improve, _: str = Depends(auth)):
+    """Better field instructions proposed by AI from what a test run read wrong (nothing is saved)."""
+    return docflow().testsets.improve(set_id, body.runId)
+
+
 @app.get(f"{DF}/flows/{{flow_id}}/spend")
 def df_flow_spend(flow_id: str, _: str = Depends(auth)):
     """This month's estimated spend on cloud and AI engines, the process's budget, and whether it reads locally now."""

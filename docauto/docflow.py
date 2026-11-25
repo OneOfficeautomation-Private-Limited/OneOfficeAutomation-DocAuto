@@ -1715,7 +1715,7 @@ class DocFlowService:
         prompt = ("You design data-extraction schemas. From the OCR text of sample documents below, propose the fields "
                   "a business would extract. Reply with JSON: {\"name\": str, \"category\": one of "
                   f"{list(LIBRARY) + ['custom']}, \"keywords\": [str], \"fields\": [{{\"name\": snake_case, \"type\": "
-                  "string|number|currency|date|enum|table, \"label\": \"English / Arabic label as printed\", "
+                  "string|number|currency|date|datetime|percentage|boolean|email|phone|address|enum|table, \"label\": \"the label as printed, in the document's language\", "
                   "\"required\": bool, \"columns\": [{\"name\", \"type\"}] for tables}]}.\n\n" +
                   "\n\n---\n\n".join(r.text[:6000] for r in results))
         data = json.loads(re.search(r"\{.*\}", llm.instance._chat(prompt), re.S).group(0))
@@ -1723,7 +1723,8 @@ class DocFlowService:
         for f in data.get("fields", []):
             if _snake(f.get("name", "")):
                 fields.append({"name": _snake(f["name"]), "type": f.get("type", "string") if f.get("type") in
-                               ("string", "number", "currency", "date", "enum", "table", "boolean") else "string",
+                               ("string", "number", "currency", "date", "datetime", "percentage", "email", "phone",
+                                "address", "enum", "table", "boolean") else "string",
                                "label": f.get("label"), "required": bool(f.get("required")), "aliases": [],
                                "columns": [{"name": _snake(c.get("name", "")) or "col", "type": c.get("type", "string")}
                                            for c in f.get("columns", [])] if f.get("type") == "table" else None,
