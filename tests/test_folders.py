@@ -153,7 +153,8 @@ def test_new_folder_inside_the_list(client, tmp_path, monkeypatch):
     r = client.post(f"{DF}/folders", json={"path": str(scans), "name": "  returns. "})
     assert r.status_code == 200, r.text
     assert r.json()["path"] == os.path.join(str(scans), "returns") and (scans / "returns").is_dir()
-    for bad in ("a/b", "..", "con", "x" * 121, "what?"):
+    # CON, PRN... are refused on Windows only: elsewhere they are ordinary names
+    for bad in ("a/b", "..", *(("con",) if os.name == "nt" else ()), "x" * 121, "what?"):
         assert client.post(f"{DF}/folders", json={"path": str(scans), "name": bad}).status_code == 400, bad
     assert client.post(f"{DF}/folders", json={"path": str(scans), "name": "riyadh"}).status_code == 400
     assert client.post(f"{DF}/folders", json={"path": str(tmp_path), "name": "new"}).status_code == 403
