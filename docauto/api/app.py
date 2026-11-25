@@ -687,6 +687,16 @@ async def df_upload(flow_id: str, files: list[UploadFile] = File(...), wait: boo
     return {"documents": out}
 
 
+class _Split(BaseModel):
+    parts: list[dict]
+
+
+@app.post(f"{DF}/documents/{{doc_id}}/split")
+def df_resplit(doc_id: str, body: _Split, wait: bool = Query(False), _: str = Depends(auth)):
+    """Split a scanned batch again as a person says: parts [{"pages": [1, 2], "docType": "invoice"}]."""
+    return docflow().resplit(doc_id, body.parts, wait)
+
+
 class _Example(BaseModel):
     documentId: str
 

@@ -1280,6 +1280,48 @@ class DocFlowService:
         self.store.save_result(result)
         return "split"
 
+    def resplit(self, batch_id: str, parts: list[dict], wait: bool = False) -> dict:
+        """A person corrects how a scanned batch was split: parts [{"pages": [1, 2], "docType": id or None}]. The
+        documents split from it before are removed (an approved one cannot be: the batch is then left as it is), and
+        each part is read again as its type. Pages are numbered from 1; every part needs at least one page."""
+        row = self.store.doc_row(batch_id)
+        if not row or row["status"] != "split":
+            raise InvalidInput("only a batch that was split can be split again")
+        fl = self.flow(row["instance_id"])
+        res = self.store.get_result(batch_id)
+        count = len(res.pages) if res else 0
+        seen: set[int] = set()
+        clean = []
+        for p in parts:
+            pages = sorted({int(x) for x in (p.get("pages") or [])})
+            if not pages or pages[0] < 1 or pages[-1] > count:
+                raise InvalidInput(f"each part needs pages between 1 and {count}")
+            if seen & set(pages):
+                raise InvalidInput("a page can be in one part only")
+            seen |= set(pages)
+            dt = self.doctype(p["docType"]) if p.get("docType") else None
+            clean.append((pages, dt))
+        if not clean:
+            raise InvalidInput("give at least one part")
+        kids = self.store.children(batch_id)
+        if any(k["status"] == "validated" for k in kids):
+            raise InvalidInput("a part of this batch is already approved: it cannot be split again")
+        for k in kids:
+            self.store.delete_document(k["id"])
+        data, file_name, mime = self.store.file_bytes(batch_id)
+        stem = Path(file_name).stem
+        made = []
+        for i, (pages, dt) in enumerate(clean, 1):
+            part, ext = extract_pages(data, mime, pages)
+            label = (dt.name if dt else "unclassified").lower().replace(" ", "-")
+            opt = self._options(fl, dt, row.get("source") or "upload", parentId=batch_id, reuseFrom=batch_id, reusePages=pages)
+            made.append(self.svc.submit(part, f"{stem}_{i}-{label}{ext}", opt, wait=wait)["documentId"])
+        if res:
+            res.warnings.append("Split again by a person: " + ", ".join(
+                f"pages {p[0]}-{p[-1]} → {dt.name if dt else 'unclassified'}" for p, dt in clean))
+            self.store.save_result(res)
+        return {"documentId": batch_id, "children": made}
+
     # ---------------------------------------------------------------- documents & review
     def document(self, doc_id: str, brief: bool = False) -> dict:
         row = self.store.doc_row(doc_id)

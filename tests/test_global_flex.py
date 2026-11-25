@@ -431,3 +431,33 @@ def test_teaching_examples_reach_ai_reading(monkeypatch):
     with pytest.raises(InvalidInput):
         df.add_example("invoice", "no-such-document")
     svc.close()
+
+
+def test_a_person_splits_a_batch_again(monkeypatch):
+    import io
+    from reportlab.pdfgen import canvas
+    from tests.conftest import make_config
+    from docauto.docflow import ClassifySettings, DocFlowService, Flow
+    from docauto.errors import InvalidInput
+    from docauto.pipeline import DocumentService
+    import pytest
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    for text in ("INVOICE Invoice Number: A-1 Total: 10.00", "INVOICE continued page", "RECEIPT Total: 5.00 thank you"):
+        c.drawString(60, 760, text)
+        c.showPage()
+    c.save()
+    svc = DocumentService(make_config())
+    df = DocFlowService(svc)
+    fl = df.save_flow(Flow(name="Mixed", docTypes=["invoice", "receipt"], classify=ClassifySettings(mode="auto", split=True)), new=True)
+    batch = df.upload(fl.id, buf.getvalue(), "scan.pdf", wait=True)["documentId"]
+    assert svc.store.doc_row(batch)["status"] == "split"
+    out = df.resplit(batch, [{"pages": [1, 2], "docType": "invoice"}, {"pages": [3], "docType": "receipt"}], wait=True)
+    kids = svc.store.children(batch)
+    assert len(kids) == 2 and [k["doctype_id"] for k in kids] == ["invoice", "receipt"] and set(out["children"]) == {k["id"] for k in kids}
+    with pytest.raises(InvalidInput):
+        df.resplit(batch, [{"pages": [1, 2]}, {"pages": [2, 3]}])     # page 2 twice
+    with pytest.raises(InvalidInput):
+        df.resplit(batch, [{"pages": [4]}])                             # no page 4
+    svc.close()
