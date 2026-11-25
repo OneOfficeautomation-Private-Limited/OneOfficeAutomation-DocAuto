@@ -256,7 +256,9 @@ class Rule(BaseModel):
     type: Literal["duplicate", "lookup", "ksa_vat", "tax", "threshold", "required", "expression", "pattern", "date_range"]
     name: str = ""
     enabled: bool = True
-    action: Literal["review", "reject", "warn"] = "review"
+    # route: the document goes to another process (params routeTo) instead; notify: people hear of it (params notify:
+    # addresses, user names, role:, team:) and the document goes on as with warn
+    action: Literal["review", "reject", "warn", "route", "notify"] = "review"
     docTypes: list[str] = Field(default_factory=list)   # empty = all doc types of the flow
     params: dict[str, Any] = Field(default_factory=dict)
 
@@ -511,8 +513,11 @@ def run_rules(store, flow: Flow, doctype: Optional[DocType], doc_id: str, result
 
     def flag(rule: Rule, message: str, field: Optional[str] = None):
         flags.append({"rule": rule.name or rule.type, "type": rule.type, "action": rule.action,
-                      "message": message, "field": field})
-        if field and field in by and rule.action != "warn":
+                      "message": message, "field": field,
+                      **({"routeTo": rule.params.get("routeTo")} if rule.action == "route" else {}),
+                      **({"notify": rule.params.get("notify"), "requestedBy": rule.params.get("requestedBy")}
+                         if rule.action == "notify" else {})})
+        if field and field in by and rule.action not in ("warn", "notify"):
             by[field].validation.passed = False
             if message not in by[field].validation.errors:
                 by[field].validation.errors.append(message)
@@ -598,7 +603,7 @@ UNCLASSIFIED = ReviewReason(reason="unclassified", message="The document type wa
 def _flag_reasons(flags: list[dict]) -> list[ReviewReason]:
     """The process's rules that sent the document to review (or rejected it), as review reasons."""
     return [ReviewReason(field=f.get("field"), reason="rule", rule=f.get("rule"), message=f.get("message", ""))
-            for f in flags if f.get("action") != "warn"]
+            for f in flags if f.get("action") not in ("warn", "notify", "route")]
 
 
 def _merge_reasons(*groups: list[ReviewReason]) -> list[ReviewReason]:
@@ -1295,8 +1300,22 @@ class DocFlowService:
                                                                       opt.fieldThresholds))
         result.review.reasons = reasons
         new = status
+        for f in flags:
+            if f["action"] == "notify":
+                self._notify(fl, doc_id, f)
+        route = next((f for f in flags if f["action"] == "route" and f.get("routeTo")), None)
         if any(f["action"] == "reject" for f in flags):
             new = "invalid"
+        elif route:
+            target = self._route(fl, doc_id, route)
+            if not target:   # the process to send it to is gone: a person decides instead
+                result.review.reasons = _merge_reasons(result.review.reasons, [ReviewReason(field=route.get("field"), reason="rule", rule=route["rule"],
+                                                                                         message=route["message"] + " (the process to send it to does not exist)")])
+                new = "validation"
+            if target:
+                result.warnings.append(f"Sent to process {target} because {route['rule']}: {route['message']}")
+                result.review.required, result.review.status = False, ReviewStatus.not_required
+                new = "invalid"
         elif reasons and status == "success":
             new = "validation"
         elif not reasons and status == "validation":
@@ -1304,7 +1323,7 @@ class DocFlowService:
             result.review.required, result.review.status = False, ReviewStatus.not_required
             result.warnings = [w for w in result.warnings if not w.endswith("needs review")]
         if flags:
-            result.warnings.extend(f"{f['rule']}: {f['message']}" for f in flags if f["action"] != "warn")
+            result.warnings.extend(f"{f['rule']}: {f['message']}" for f in flags if f["action"] not in ("warn", "notify"))
         if new == "validation":
             result.review.required, result.review.status = True, ReviewStatus.pending
         self.store.save_result(result)  # also persists lookup enrichment
@@ -1762,6 +1781,32 @@ class DocFlowService:
             return False, f"{type(e).__name__}: {e}", True
         except Exception as e:
             return False, f"{type(e).__name__}: {e}", False
+
+    def _route(self, fl: Flow, doc_id: str, flag: dict) -> Optional[str]:
+        """A failed check that sends the document to another process: the same file goes there as a new document.
+        Returns that process's name, or None when it cannot be (missing, the same process: the check then reviews)."""
+        try:
+            target = self.flow(str(flag["routeTo"]))
+        except InvalidInput:
+            return None
+        if target.id == fl.id:
+            return None
+        data, file_name, _ = self.store.file_bytes(doc_id)
+        self.upload(target.id, data, file_name, source="routed")
+        return target.name
+
+    def _notify(self, fl: Flow, doc_id: str, flag: dict) -> None:
+        """A failed check that tells people: a mail through the Command Center (never stops the document)."""
+        to = [str(x).strip() for x in (flag.get("notify") or []) if str(x).strip()]
+        if not to:
+            return
+        row = self.store.doc_row(doc_id) or {}
+        try:
+            self._platform("send-mail", {"requestedBy": flag.get("requestedBy") or "", "to": to,
+                                         "subject": f"{fl.name}: {row.get('file_name') or doc_id}: {flag['rule']}",
+                                         "body": f"{flag['message']}\n\nProcess: {fl.name}\nDocument: {row.get('file_name') or doc_id}"})
+        except Exception as e:   # telling people is best effort: the document goes on
+            log.warning("notify for %s failed: %s", doc_id, e)
 
     def _files(self, dv: Delivery, doc_id: str, body: dict) -> list[tuple[str, bytes, str]]:
         """The files a delivery sends: the original (decrypted), the results as JSON, and the text as Markdown, as its

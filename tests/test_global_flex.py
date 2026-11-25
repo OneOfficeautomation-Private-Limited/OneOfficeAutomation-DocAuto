@@ -608,3 +608,34 @@ def test_s3_signature_version_4():
         "https://s3.ap-south-1.amazonaws.com/b/in/a%20b.pdf"
     assert object_url({"provider": "s3", "bucket": "b", "endpoint": "https://minio.local:9000"}, "x.pdf") == "https://minio.local:9000/b/x.pdf"
     assert object_url({"provider": "http_put", "url": "https://files.example.com/up/{file}"}, "x.pdf") == "https://files.example.com/up/x.pdf"
+
+
+def test_failed_checks_route_to_another_process_or_notify(monkeypatch):
+    import json as _json
+    import time
+    from tests.conftest import make_config
+    from tests.test_einvoice import invoice_pdf
+    from docauto.docflow import DocFlowService, Flow, Rule
+    from docauto.pipeline import DocumentService
+    srv, seen = _standin()
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    monkeypatch.setenv("DOCAUTO_PLATFORM_URL", f"http://127.0.0.1:{srv.server_address[1]}")
+    svc = DocumentService(make_config())
+    df = DocFlowService(svc)
+    big = df.save_flow(Flow(name="Big invoices", docTypes=["invoice"]), new=True)
+    ap = df.save_flow(Flow(name="AP", docTypes=["invoice"], rules=[
+        Rule(type="threshold", name="Over 1,000", action="route", params={"field": "total", "op": ">", "value": 1000, "routeTo": big.id}),
+        Rule(type="threshold", name="Over 500", action="notify", params={"field": "total", "op": ">", "value": 500, "notify": ["cfo@example.com"], "requestedBy": "ann"})]), new=True)
+    d = df.upload(ap.id, invoice_pdf(["ACME", "Invoice", "Invoice Number: INV-8", "Subtotal: 5,000.00", "Total: 5,000.00 EUR"]), "big.pdf", wait=True)["documentId"]
+    row, res = svc.store.doc_row(d), svc.store.get_result(d)
+    assert row["status"] == "invalid" and any(w.startswith("Sent to process Big invoices") for w in res.warnings)
+    for _ in range(50):
+        if svc.store.instance_documents(big.id, None, 5):
+            break
+        time.sleep(0.1)
+    assert svc.store.instance_documents(big.id, None, 5)[0]["source"] == "routed"
+    mail = next(x for x in seen if x["path"].endswith("send-mail"))
+    m = _json.loads(mail["body"])
+    assert m["to"] == ["cfo@example.com"] and m["requestedBy"] == "ann" and "Over 500" in m["subject"]
+    svc.close()
+    srv.shutdown()
