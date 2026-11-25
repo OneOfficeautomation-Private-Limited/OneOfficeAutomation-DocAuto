@@ -369,7 +369,9 @@ class Store:
         r = self._one(q + " ORDER BY created_at LIMIT 1", tuple(args))
         return r["id"] if r else None
 
-    def instance_stats(self, instance_id: Optional[str]) -> dict:
+    def instance_stats(self, instance_id: Optional[str], days: int = 14) -> dict:
+        """Counts by status, and per day for the last `days` days with documents (14 by default, 1 to 366)."""
+        days = max(1, min(366, int(days or 14)))
         where, args = (("WHERE instance_id=? AND COALESCE(status,'')<>'split'", (instance_id,)) if instance_id
                        else ("WHERE instance_id IS NOT NULL AND COALESCE(status,'')<>'split'", ()))
         by = {r["status"]: r["n"] for r in self._all(f"SELECT status, COUNT(*) n FROM documents {where} GROUP BY status", args)}
@@ -381,7 +383,7 @@ class Store:
             f"SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) stp, "
             f"SUM(CASE WHEN status IN ('validation','validated','invalid') THEN 1 ELSE 0 END) human, "
             f"SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed "
-            f"FROM documents {where} GROUP BY day ORDER BY day DESC LIMIT 14", args)][::-1]
+            f"FROM documents {where} GROUP BY day ORDER BY day DESC LIMIT {days}", args)][::-1]
         pages = self._one(f"SELECT COALESCE(SUM(u.pages),0) p, COALESCE(SUM(u.credits),0) cr FROM usage u "
                           f"JOIN documents d ON d.id=u.document_id {where.replace(" AND COALESCE(status,'')<>'split'", '').replace('instance_id', 'd.instance_id')} "
                           f"AND u.capability IN ('ocr_printed','tables','ocr_handwriting','layout','key_value')", args)

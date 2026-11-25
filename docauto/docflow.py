@@ -1877,7 +1877,7 @@ class DocFlowService:
         w.writerows(table)
         return ("﻿" + s.getvalue()).encode("utf-8"), "text/csv; charset=utf-8", f"{fl.id}-{stamp}.csv"
 
-    def overview(self) -> dict:
+    def overview(self, days: int = 14) -> dict:
         flows = self.flows()
         per = []
         for f in flows:
@@ -1886,7 +1886,7 @@ class DocFlowService:
         q = self.review_queue(None)
         month = datetime.now(timezone.utc).strftime("%Y-%m-01")
         used = self.store.month_usage(month)
-        return {"totals": self.store.instance_stats(None), "flows": per, "review": len(q),
+        return {"totals": self.store.instance_stats(None, days), "flows": per, "review": len(q),
                 "pagesThisMonth": used["p"], "creditsThisMonth": used["cr"],
                 "overdue": sum(1 for x in q if x["overdue"]), "doctypes": len(self.doctypes()),
                 "recent": self.store.instance_documents(None, None, limit=12),

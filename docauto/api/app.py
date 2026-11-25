@@ -866,8 +866,8 @@ async def df_test(file: UploadFile = File(...), docType: str = Form(...), engine
 
 
 @app.get(f"{DF}/overview")
-def df_overview(_: str = Depends(auth)):
-    return docflow().overview()
+def df_overview(days: int = Query(14, ge=1, le=366), _: str = Depends(auth)):
+    return docflow().overview(days)
 
 
 # ---- reference data
