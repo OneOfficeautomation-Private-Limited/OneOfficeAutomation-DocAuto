@@ -1,7 +1,7 @@
 # Default configuration: choose ONE deployment profile and enable option packs.
 # Secrets use ${ENV_VAR} placeholders - never commit real keys.
 
-deployment_profile: ${DOCAUTO_PROFILE:-onprem_hybrid}   # onprem_airgapped | onprem_hybrid | cloud_saas
+deployment_profile: ${DOCAUTO_PROFILE:-onprem_hybrid}   # onprem_airgapped | onprem_hybrid | cloud_saas | custom
 
 option_packs:                            # each pack is installed/licensed separately
   tier1_opensource: ${DOCAUTO_PACK_OPENSOURCE:-true}   # Option 1: bundled free engines (Tesseract, PaddleOCR)
@@ -13,7 +13,7 @@ residency:
   allow_cross_border: false
 
 providers:
-  allow: ["*"]
+  allow: ${DOCAUTO_ALLOW:-*}               # comma list of engine ids, * for any (the Custom profile runs only these)
   deny: ${DOCAUTO_DENY:-}                  # comma list of engine ids
   settings:
     tesseract:

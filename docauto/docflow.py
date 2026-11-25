@@ -282,6 +282,7 @@ class Intake(BaseModel):
     # QR code on the page cross-checks the extracted fields. Only acts when such data is found.
     einvoiceFirst: bool = True
     einvoiceStandards: list[str] = Field(default_factory=list)   # e-invoice standards read (empty = every one)
+    upload: bool = True   # people may add documents on the screens (agents, e-mail and folders are not affected)
 
 
 class Flow(BaseModel):
@@ -1208,6 +1209,8 @@ class DocFlowService:
             raise InvalidInput(f"'{file_name}' is not a file Document Automation reads: PDF, PNG, JPG, TIFF, BMP, WEBP "
                                "or an XML e-invoice")
         fl = self.flow(flow_id)
+        if source == "upload" and not fl.intake.upload:
+            raise InvalidInput(f"'{fl.name}' takes no uploads: its documents come from agents, e-mail or a folder")
         if require_live and fl.status != "live":
             raise InvalidInput(f"flow '{fl.name}' is a draft - set it live before bots or folders use it")
         types = self.flow_doctypes(fl)
@@ -2073,7 +2076,7 @@ class DocFlowService:
                    for f, what, p in uses if rs and folders.inside(p, rs) is None]
         return {"limited": bool(rs), "roots": out, "outside": outside}
 
-    def browse_folder(self, path: str) -> dict:
+    def browse_folder(self, path: str, q: str = "") -> dict:
         """One folder inside the list: the folders in it (never files), how many files each would read straight away,
         and which process already watches each. Nothing outside the list is shown."""
         rs = folders.roots(self.tenant)
@@ -2102,10 +2105,12 @@ class DocFlowService:
                     continue
             except OSError:
                 continue
+            if q and q.casefold() not in e.name.casefold():   # only folders whose name has the words looked for
+                continue
             sub = os.path.join(shown, e.name)
             if folders.inside(sub, [root]) is None:       # a link that points outside the allowed folder
                 continue
-            if len(subs) >= folders.MAX_FOLDERS:
+            if len(subs) >= int(env_number("DOCAUTO_FOLDER_LIST_MAX", folders.MAX_FOLDERS, 10, 5000)):
                 truncated = True
                 break
             subs.append({"name": e.name, "path": sub, "waiting": folders.count_files(sub, SUPPORTED_EXT),
@@ -2115,7 +2120,8 @@ class DocFlowService:
                 "root": {"name": root.name, "path": root.path},
                 "parent": None if at_root else os.path.dirname(shown),
                 "access": folders.access(shown), "waiting": folders.count_files(shown, SUPPORTED_EXT),
-                "watchedBy": watched.get(folders.real(shown), []), "folders": subs, "truncated": truncated}
+                "watchedBy": watched.get(folders.real(shown), []), "folders": subs, "truncated": truncated,
+                "shownMax": int(env_number("DOCAUTO_FOLDER_LIST_MAX", folders.MAX_FOLDERS, 10, 5000))}
 
     def make_folder(self, parent: str, name: str) -> dict:
         """A new folder inside a folder processes may use; returns it as browse_folder does."""

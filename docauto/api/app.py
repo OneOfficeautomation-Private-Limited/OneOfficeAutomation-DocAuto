@@ -788,10 +788,10 @@ def df_scan(flow_id: str, _: str = Depends(auth)):
 
 # ---- folders processes may use (3.2.0): the Command Center's folder picker
 @app.get(f"{DF}/folders")
-def df_folders(path: str = "", _: str = Depends(auth)):
+def df_folders(path: str = "", q: str = "", _: str = Depends(auth)):
     """No path: the listed folders, DocFlow's access to each and the processes using them. With a path inside the
     list: the folders in it (never files). Read-only."""
-    return docflow().browse_folder(path) if path else docflow().folder_roots()
+    return docflow().browse_folder(path, q) if path else docflow().folder_roots()
 
 
 class _FolderList(BaseModel):

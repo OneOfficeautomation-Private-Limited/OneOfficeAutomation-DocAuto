@@ -17,10 +17,15 @@ MASK = "••••••••"
 # field: key, label, type (text|secret|bool|select|number|path), help, options, default
 DEPLOYMENT = [
     {"key": "DOCAUTO_PROFILE", "label": "Deployment profile", "type": "select",
-     "options": ["onprem_airgapped", "onprem_hybrid", "cloud_saas"], "default": "onprem_hybrid",
-     "help": "Air-gapped: only local engines. Hybrid: local + approved cloud engines. SaaS: everything."},
+     "options": ["onprem_airgapped", "onprem_hybrid", "cloud_saas", "custom"], "default": "onprem_hybrid",
+     "help": "Air-gapped: only local engines. Hybrid: local + approved cloud engines. SaaS: everything. Custom: only "
+             "the engines in Engines allowed below (local or cloud), in the allowed regions."},
+    {"key": "DOCAUTO_ALLOW", "label": "Engines allowed", "type": "text", "default": "*", "allowEmpty": True,
+     "help": "Engine ids, comma separated; * for any (e.g. tesseract, paddleocr, azure-di, claude). With the Custom "
+             "profile, only these run."},
     {"key": "DOCAUTO_ALLOWED_REGIONS", "label": "Allowed processing regions", "type": "text", "default": "",
-     "help": "Comma-separated (e.g. uaenorth, me-central-1). Empty = no region restriction."},
+     "help": "Comma-separated regions or groups (eu, uk, gcc, ksa, uae, india, us, canada, australia, japan, "
+             "singapore, brazil, or a cloud's own name such as westeurope). Empty = no region restriction."},
     {"key": "DOCAUTO_DENY", "label": "Disabled engines", "type": "text", "default": "",
      "help": "Comma-separated engine ids that must never be used."},
     {"key": "DOCAUTO_API_TOKEN", "label": "API token for the RPA tool", "type": "secret", "default": "",
@@ -89,6 +94,8 @@ DEFAULTS = [
      "default": "15"},
     {"key": "DOCAUTO_CORRECTIONS_REMEMBERED", "label": "Reviewer corrections AI reading learns from", "type": "number",
      "default": "8", "help": "The newest corrections of a document type, shown to AI reading as examples. 0: none."},
+    {"key": "DOCAUTO_FOLDER_LIST_MAX", "label": "Folders shown at a time when choosing a folder", "type": "number",
+     "default": "300", "help": "More shows more but takes longer (the files waiting in each are counted). The search box finds any."},
     {"key": "DOCAUTO_TEACH_MAX_SAMPLES", "label": "Most example files for Teach from samples", "type": "number",
      "default": "5", "help": "More examples find more fields; each is read once (local engines: free)."},
     {"key": "DOCAUTO_OFFERED_LANGUAGES", "label": "Languages offered for document types", "type": "text",

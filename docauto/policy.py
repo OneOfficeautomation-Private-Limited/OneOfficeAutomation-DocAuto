@@ -5,7 +5,9 @@ from fnmatch import fnmatch
 
 from .provider import ProviderInfo
 
-PROFILES = ("onprem_airgapped", "onprem_hybrid", "cloud_saas")
+# custom: the administrator's own profile: exactly the engines in the allow list (local or cloud), in the allowed
+# regions, with cloud opt-in as for hybrid
+PROFILES = ("onprem_airgapped", "onprem_hybrid", "cloud_saas", "custom")
 
 # Region groups for residency rules: an allowed region may name a group ("eu"), and an engine's region may be a
 # cloud's own name for a place ("westeurope", "europe-west3", "eu-central-1"). Patterns use * like the allow list.

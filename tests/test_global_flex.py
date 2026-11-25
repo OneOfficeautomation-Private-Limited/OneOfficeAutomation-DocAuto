@@ -639,3 +639,53 @@ def test_failed_checks_route_to_another_process_or_notify(monkeypatch):
     assert m["to"] == ["cfo@example.com"] and m["requestedBy"] == "ann" and "Over 500" in m["subject"]
     svc.close()
     srv.shutdown()
+
+
+def test_custom_privacy_profile_runs_only_the_allowed_engines():
+    from docauto.policy import PolicyEngine
+    from docauto.provider import ProviderInfo
+    def info(pid, local, regions=()):
+        i = ProviderInfo.__new__(ProviderInfo)
+        i.id, i.runsLocally, i.regions = pid, local, list(regions)
+        return i
+    p = PolicyEngine({"deployment_profile": "custom", "providers": {"allow": "tesseract, azure-di"},
+                      "residency": {"allowed_regions": "eu"}, "routing": {"cloud_opt_in": True}})
+    assert p.allows(info("tesseract", True)) and not p.allows(info("paddleocr", True))
+    assert p.allows(info("azure-di", False, ["westeurope"])) and not p.allows(info("azure-di", False, ["eastus"]))
+    assert not p.allows(info("claude", False, ["westeurope"]))
+
+
+def test_a_process_may_take_no_uploads(monkeypatch):
+    from tests.conftest import make_config
+    from tests.test_einvoice import invoice_pdf
+    from docauto.docflow import DocFlowService, Flow, Intake
+    from docauto.errors import InvalidInput
+    from docauto.pipeline import DocumentService
+    import pytest
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    svc = DocumentService(make_config())
+    df = DocFlowService(svc)
+    fl = df.save_flow(Flow(name="Mail only", docTypes=["invoice"], intake=Intake(upload=False)), new=True)
+    pdf = invoice_pdf(["Invoice", "Invoice Number: A-1"])
+    with pytest.raises(InvalidInput):
+        df.upload(fl.id, pdf, "a.pdf")
+    assert df.upload(fl.id, pdf, "a.pdf", source="email", wait=True)["documentId"]
+    svc.close()
+
+
+def test_find_a_folder_by_name_beyond_the_shown_ones(monkeypatch, tmp_path):
+    from tests.conftest import make_config
+    from docauto.docflow import DocFlowService
+    from docauto.pipeline import DocumentService
+    for n in ["Invoices 2025", "Invoices 2026", "Receipts"] + [f"Box {i:02d}" for i in range(12)]:
+        (tmp_path / n).mkdir()
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    monkeypatch.setenv("DOCAUTO_ALLOWED_FOLDERS", f"Scans={tmp_path}")
+    monkeypatch.setenv("DOCAUTO_FOLDER_LIST_MAX", "10")
+    svc = DocumentService(make_config())
+    df = DocFlowService(svc)
+    full = df.browse_folder(str(tmp_path))
+    assert full["truncated"] and len(full["folders"]) == 10 and full["shownMax"] == 10
+    found = df.browse_folder(str(tmp_path), "invoices")
+    assert [f["name"] for f in found["folders"]] == ["Invoices 2025", "Invoices 2026"] and not found["truncated"]
+    svc.close()
