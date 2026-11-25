@@ -44,6 +44,8 @@ from .pipeline import DocumentService, ProcessOptions
 from .scoring import review_reasons
 
 log = logging.getLogger("docauto.docflow")
+READABLE_MIME = {"application/pdf", "image/png", "image/jpeg", "image/tiff", "image/bmp", "image/webp", "application/xml",
+                 "text/xml"}
 SUPPORTED_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".xml"}
 INBOX_ID = "smart-inbox"
 
@@ -1130,7 +1132,8 @@ class DocFlowService:
             if new:
                 base = fl.id or _slug(fl.name, "flow")
                 fl.id, n = base, 2
-                while self.store.df_get("flow", fl.id):
+                # not the id of a process that exists, nor of a deleted one whose documents are kept
+                while self.store.df_get("flow", fl.id) or self.store.instance_documents(fl.id, None, 1):
                     fl.id, n = f"{base}-{n}", n + 1
                 fl.createdAt, fl.version = _now(), 1
             fl.updatedAt = _now()
@@ -1182,6 +1185,10 @@ class DocFlowService:
 
     def upload(self, flow_id: str, data: bytes, file_name: str, source: str = "upload", wait: bool = False,
                require_live: bool = False) -> dict:
+        from .preprocess import sniff_mime
+        if sniff_mime(data, file_name) not in READABLE_MIME:   # refused here, whatever way it came in
+            raise InvalidInput(f"'{file_name}' is not a file Document Automation reads: PDF, PNG, JPG, TIFF, BMP, WEBP "
+                               "or an XML e-invoice")
         fl = self.flow(flow_id)
         if require_live and fl.status != "live":
             raise InvalidInput(f"flow '{fl.name}' is a draft - set it live before bots or folders use it")
@@ -1232,10 +1239,11 @@ class DocFlowService:
                 dt = self.doctype(opt.doctypeId)
             except InvalidInput:
                 dt = None
-        if dt is not None and fl.classify.checkType and fl.classify.mode == "single":
-            _, score, _ = classify_page(result.text or "", [dt])
-            if score < fl.classify.minScore:
-                result.warnings.append(f"Does not look like {dt.name}: its recognition words are missing")
+        if dt is not None and fl.classify.checkType and fl.classify.mode == "single" and dt.keywords:
+            # the type's own recognition words (not its field labels: "Total" is on many kinds of document)
+            low = (result.text or "").lower()
+            if not any(re.search(r"(?<![\w])" + re.escape(k.lower().strip()) + r"(?![\w])", low) for k in dt.keywords if k.strip()):
+                result.warnings.append(f"Does not look like {dt.name}: none of its recognition words is on it")
                 dt = None
         if dt is None and fl.classify.whenNoType == "reject":
             result.review.required, result.review.status = False, ReviewStatus.not_required
@@ -1250,6 +1258,9 @@ class DocFlowService:
             except InvalidInput:
                 other = None
             if other is not None:
+                # what was read as the wrong type goes: its fields and review notes do not belong to this document
+                result.fields = []
+                result.warnings = [w for w in result.warnings if not w.startswith(("field '", "document confidence"))]
                 result.warnings.append("Not one of this process's document types: kept as Other document")
                 result.review.required, result.review.status = False, ReviewStatus.not_required
                 self.store.save_result(result)

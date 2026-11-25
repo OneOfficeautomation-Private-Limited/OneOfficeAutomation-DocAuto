@@ -475,3 +475,43 @@ def test_document_as_markdown_for_knowledge_bases():
     md = document_markdown(doc, {"docTypeName": "Invoice", "fileName": "inv.pdf"})
     assert "# inv.pdf" in md and "Document type: Invoice" in md and "- **total**: 5.0" in md
     assert "| Item | Amount |" in md and "| Paper | 5.00 |" in md and "Invoice INV-7" in md
+
+
+def test_no_type_fits_other_reject_and_type_check(monkeypatch):
+    from tests.conftest import make_config
+    from tests.test_einvoice import invoice_pdf
+    from docauto.docflow import ClassifySettings, DocFlowService, Flow
+    from docauto.errors import InvalidInput
+    from docauto.pipeline import DocumentService
+    import pytest
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    svc = DocumentService(make_config())
+    df = DocFlowService(svc)
+    pdf = invoice_pdf(["ACME", "Invoice", "Invoice Number: INV-9", "Total: 9.00 EUR"])
+    keep = df.save_flow(Flow(name="k", docTypes=["receipt"], classify=ClassifySettings(checkType=True, whenNoType="other")), new=True)
+    d = df.upload(keep.id, pdf, "x.pdf", wait=True)["documentId"]
+    row, res = svc.store.doc_row(d), svc.store.get_result(d)
+    assert (row["status"], row["doctype_id"], res.fields) == ("success", "other", [])
+    rej = df.save_flow(Flow(name="r", docTypes=["receipt"], classify=ClassifySettings(checkType=True, whenNoType="reject")), new=True)
+    assert svc.store.doc_row(df.upload(rej.id, pdf, "y.pdf", wait=True)["documentId"])["status"] == "invalid"
+    ok = df.save_flow(Flow(name="i", docTypes=["invoice"], classify=ClassifySettings(checkType=True, whenNoType="reject")), new=True)
+    assert svc.store.doc_row(df.upload(ok.id, pdf, "z.pdf", wait=True)["documentId"])["doctype_id"] == "invoice"
+    with pytest.raises(InvalidInput):
+        df.upload(ok.id, b"PK\x03\x04 a word file", "notes.docx")
+    svc.close()
+
+
+def test_a_new_process_never_takes_a_deleted_ones_documents(monkeypatch):
+    from tests.conftest import make_config
+    from tests.test_einvoice import invoice_pdf
+    from docauto.docflow import DocFlowService, Flow
+    from docauto.pipeline import DocumentService
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    svc = DocumentService(make_config())
+    df = DocFlowService(svc)
+    old = df.save_flow(Flow(name="AP", docTypes=["invoice"]), new=True)
+    df.upload(old.id, invoice_pdf(["Invoice", "Invoice Number: A-1"]), "a.pdf", wait=True)
+    df.delete_flow(old.id)
+    new = df.save_flow(Flow(name="AP", docTypes=["invoice"]), new=True)
+    assert new.id != old.id and not svc.store.instance_documents(new.id, None, 10)
+    svc.close()
