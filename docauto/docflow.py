@@ -634,6 +634,34 @@ class RefData:
         return None
 
 
+def document_markdown(res: DocumentResult, body: Optional[dict] = None) -> str:
+    """A read document as Markdown: its name and type, the values read, then each page's text with its tables as
+    Markdown tables. A Knowledge base's indexing agent (Knowledge Q&A, Build index) reads these files."""
+    body = body or {}
+    out = [f"# {body.get('fileName') or getattr(res, 'fileName', None) or res.documentId}", ""]
+    if body.get("docTypeName"):
+        out += [f"Document type: {body['docTypeName']}", ""]
+    vals = [(f.name, f.out()) for f in res.fields if f.value not in (None, "", []) and f.type != "table"]
+    if vals:
+        out += ["## Values read", ""] + [f"- **{n}**: {v}" for n, v in vals] + [""]
+    for p in res.pages:
+        out += [f"## Page {p.pageNumber}", ""] + [l.text for l in p.lines] + [""]
+        for t in p.tables:
+            rows = [[c.text.replace("|", "/").replace("\n", " ") for c in sorted(r, key=lambda c: c.col)]
+                    for r in _table_rows(t)]
+            if rows:
+                out += ["| " + " | ".join(rows[0]) + " |", "|" + "---|" * len(rows[0])] + \
+                       ["| " + " | ".join(r) + " |" for r in rows[1:]] + [""]
+    return "\n".join(out)
+
+
+def _table_rows(t) -> list[list]:
+    rows: dict[int, list] = {}
+    for c in getattr(t, "cells", []):
+        rows.setdefault(c.row, []).append(c)
+    return [rows[k] for k in sorted(rows)]
+
+
 def parse_table_file(data: bytes, file_name: str, header_row: int = 1) -> tuple[list[str], list[dict]]:
     """A reference table from CSV / TSV / text (any of , ; tab | as separator), Excel (.xlsx, .xlsm), OpenDocument
     (.ods) or JSON (a list of objects, or {"rows": [...]}). header_row: the row with the column names (1 = the first;
@@ -1685,6 +1713,10 @@ class DocFlowService:
                 f = self.store.file_bytes(doc_id)
                 if f:   # the original, decrypted: the folder is the customer's own output
                     (folder / f"{stem}_{doc_id[:8]}{Path(f[1]).suffix}").write_bytes(f[0])
+                    if dv.params.get("saveText"):   # the whole document as text, for search and Knowledge bases
+                        res = self.store.get_result(doc_id)
+                        if res:
+                            (folder / f"{stem}_{doc_id[:8]}.md").write_text(document_markdown(res, body), encoding="utf-8")
                     if dv.params.get("searchablePdf") and not f[1].lower().endswith(".xml"):
                         # a PDF whose text can be searched and copied (the page images with the text read under them)
                         try:

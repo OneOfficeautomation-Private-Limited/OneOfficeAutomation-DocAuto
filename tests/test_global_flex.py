@@ -461,3 +461,17 @@ def test_a_person_splits_a_batch_again(monkeypatch):
     with pytest.raises(InvalidInput):
         df.resplit(batch, [{"pages": [4]}])                             # no page 4
     svc.close()
+
+
+def test_document_as_markdown_for_knowledge_bases():
+    from docauto.docflow import document_markdown
+    from docauto.models import BBox, Cell, Line, Page, Table
+    b = BBox(x=0, y=0, w=1, h=0.1)
+    page = Page(pageNumber=1, width=1, height=1, lines=[Line(text="Invoice INV-7", bbox=b)],
+                tables=[Table(rows=2, cols=2, cells=[Cell(row=0, col=0, text="Item"), Cell(row=0, col=1, text="Amount"),
+                                                     Cell(row=1, col=0, text="Paper"), Cell(row=1, col=1, text="5.00")])])
+    doc = DocumentResult(documentId="d", fileName="inv.pdf", mimeType="application/pdf", pageCount=1, pages=[page],
+                         fields=[ExtractedField(name="total", type="currency", value=5.0)])
+    md = document_markdown(doc, {"docTypeName": "Invoice", "fileName": "inv.pdf"})
+    assert "# inv.pdf" in md and "Document type: Invoice" in md and "- **total**: 5.0" in md
+    assert "| Item | Amount |" in md and "| Paper | 5.00 |" in md and "Invoice INV-7" in md
