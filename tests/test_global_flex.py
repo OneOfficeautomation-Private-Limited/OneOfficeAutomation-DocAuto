@@ -689,3 +689,20 @@ def test_find_a_folder_by_name_beyond_the_shown_ones(monkeypatch, tmp_path):
     found = df.browse_folder(str(tmp_path), "invoices")
     assert [f["name"] for f in found["folders"]] == ["Invoices 2025", "Invoices 2026"] and not found["truncated"]
     svc.close()
+
+
+def test_check_boxes_and_signatures_from_cloud_engines():
+    import importlib.util
+    from pathlib import Path
+    from docauto.extraction import coerce
+    assert coerce(":selected:", "checkbox") == (True, True) and coerce(":unselected:", "checkbox") == (False, True)
+    assert coerce("[X]", "checkbox") == (True, True) and coerce("NOT_SELECTED", "checkbox") == (False, True)
+    assert coerce("[SIGNATURE]", "signature") == (True, True)
+    p = Path(__file__).resolve().parent.parent / "options" / "tier2_cloud" / "aws_textract" / "provider.py"
+    spec = importlib.util.spec_from_file_location("textract_t", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    box = {"Width": 0.2, "Height": 0.05, "Left": 0.1, "Top": 0.8}
+    page = mod.map_textract_page([{"BlockType": "LINE", "Id": "l1", "Text": "Signature:", "Confidence": 99, "Geometry": {"BoundingBox": box}},
+                                  {"BlockType": "SIGNATURE", "Id": "s1", "Confidence": 95, "Geometry": {"BoundingBox": box}}], 1, 1000, 1400)
+    assert [l.text for l in page.lines] == ["Signature:", "[SIGNATURE]"]

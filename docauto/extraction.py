@@ -172,9 +172,10 @@ def coerce(value: str, ftype: str, fmt: Optional[str] = None) -> tuple[Any, bool
         return value, False
     if ftype in ("boolean", "checkbox", "signature"):
         low = v.lower().strip("[]() ")
-        if low in YES_WORDS or v in ("☑", "☒", "✔", "✓", "[x]", "[X]", "(x)"):
+        # check boxes as engines write them: Azure ":selected:", Textract "[X]" / "SELECTED", symbols
+        if low in YES_WORDS or v in ("☑", "☒", "✔", "✓", "[x]", "[X]", "(x)", ":selected:", "SELECTED", "[SIGNATURE]"):
             return True, True
-        if low in NO_WORDS or v in ("☐", "[ ]", "( )"):
+        if low in NO_WORDS or v in ("☐", "[ ]", "( )", ":unselected:", "NOT_SELECTED"):
             return False, True
         if ftype == "signature" and v:
             return True, True     # a signature read as text (a name, initials) means signed

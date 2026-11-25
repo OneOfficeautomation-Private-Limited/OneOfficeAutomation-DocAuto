@@ -1195,7 +1195,7 @@ class DocFlowService:
             extractionProvider=(fl.engine.extractionByType.get(dt.id) if dt else None) or fl.engine.extractionProvider,
             localOnly=self.over_budget(fl),
             dateOrder=dt.dateOrder if dt else None, decimalMark=dt.decimalMark if dt else None,
-            languages=(dt.languages if dt else None) or self.offered_languages(), capabilities=fl.engine.capabilities or ["ocr_printed"],
+            languages=(dt.languages if dt else None) or self.offered_languages(), capabilities=self._capabilities(fl, dt),
             schema=dt.schema() if dt else None, instanceId=fl.id, instanceVersion=fl.version, source=source,
             doctypeId=dt.id if dt else None, fieldThreshold=fl.review.fieldConfidence,
             docThreshold=fl.review.documentConfidence, fieldThresholds=fl.review.fieldThresholds,
@@ -1784,6 +1784,16 @@ class DocFlowService:
             return False, f"{type(e).__name__}: {e}", True
         except Exception as e:
             return False, f"{type(e).__name__}: {e}", False
+
+    @staticmethod
+    def _capabilities(fl: Flow, dt: Optional[DocType]) -> list[str]:
+        """What the page reader is asked for. A process that names its own page engine and reads Ticked or Signed
+        fields also asks for check boxes and signatures (Azure, Textract); the free engines are never excluded by it."""
+        caps = list(fl.engine.capabilities or ["ocr_printed"])
+        if dt and fl.engine.ocrProvider not in ("", "auto") and any(f.type in ("checkbox", "signature") for f in dt.fields) \
+                and "selection_marks" not in caps:
+            caps.append("selection_marks")
+        return caps
 
     def _route(self, fl: Flow, doc_id: str, flag: dict) -> Optional[str]:
         """A failed check that sends the document to another process: the same file goes there as a new document.

@@ -51,6 +51,11 @@ def map_textract_page(blocks: list[dict[str, Any]], page_number: int, width: flo
                 parts.append("[X]" if c.get("SelectionStatus") == "SELECTED" else "[ ]")
         return " ".join(parts)
 
+    # a signature Textract found (feature SIGNATURES) is a mark on the page where it is, so a "Signed" field whose
+    # label is printed next to it reads it as signed
+    for b in blocks:
+        if b["BlockType"] == "SIGNATURE":
+            page.lines.append(Line(text="[SIGNATURE]", bbox=_bb(b), confidence=conf100(b.get("Confidence"))))
     for b in blocks:
         if b["BlockType"] == "TABLE":
             cells = []
@@ -108,6 +113,8 @@ class TextractProvider(OcrProvider):
             features.append("TABLES")
         if Capability.KEY_VALUE in req.capabilities or Capability.SELECTION_MARKS in req.capabilities:
             features.append("FORMS")
+        if Capability.SELECTION_MARKS in req.capabilities:   # check boxes and signatures: what "Ticked" and "Signed" read
+            features.append("SIGNATURES")
         doc = DocumentResult(documentId=req.document_id)
         for pno, img in enumerate(req.pages, 1):
             buf = io.BytesIO()
