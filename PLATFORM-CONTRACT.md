@@ -28,6 +28,8 @@ browser ──> Command Center /api/docflow/<route> ──(permission check)─�
 runner  ──> Command Center /api/agent/docflow/documents ─────────────> DocFlow /api/docs/v1/df/flows/{id}/documents
 DocFlow ──> Command Center /api/docflow-callback/start-bot   ("Start a bot" deliveries)
 DocFlow ──> Command Center /api/docflow-callback/events      (document events; see "Known gaps")
+DocFlow ──> Command Center /api/docflow-callback/send-mail   (e-mail deliveries, "tell people" checks; 3.3.0)
+DocFlow ──> Command Center /api/docflow-callback/secret      (vault keys for cloud storage deliveries; 3.3.0)
 ```
 
 The browser never sees DocFlow's address or token.
@@ -74,7 +76,7 @@ The console's screens (`platform/ui/src/docflow/http.ts`), through the proxy:
 | GET, PUT | `admin/settings` | Engine settings and routing (`{"values": {...}}`) |
 | POST | `admin/providers/{id}/test` | Test one engine |
 | GET | `documents/{id}/result` | OCR text and which engines read it |
-| GET | `df/folders?path=` | Folder picker (3.2.0): no `path`, the folders processes may use; with `path`, the folders inside it |
+| GET | `df/folders?path=&q=` | Folder picker (3.2.0): no `path`, the folders processes may use; with `path`, the folders inside it; `q` (3.3.0) only those whose name has these words |
 | POST | `df/folders` | New folder inside one processes may use: `{"path", "name"}` (3.2.0) |
 | POST | `df/folders/preview` | What a list of folders being edited would give, saving nothing: `{"folders"}` (3.2.0) |
 
@@ -98,7 +100,8 @@ forwards `admin/update` or `admin/installer.bat`.
 - **`df/folders`** (3.2.0), no `path`: `limited` (false: no list, any folder works), `roots[]` (`name`, `path`,
   `access`, `usedBy[]` of `id`, `name`), `outside[]` (`id`, `name`, `use` = `watched`/`results`, `path`). With
   `path`: `path`, `name`, `root` (`name`, `path`), `parent` (null at a listed folder), `access`, `waiting`,
-  `watchedBy[]`, `folders[]` (`name`, `path`, `waiting`, `watchedBy[]`), `truncated`. `access` is `ok` (read and move
+  `watchedBy[]`, `folders[]` (`name`, `path`, `waiting`, `watchedBy[]`), `truncated`, `shownMax` (3.3.0, the cap
+  set by `DOCAUTO_FOLDER_LIST_MAX`). `access` is `ok` (read and move
   files), `read`, `missing` or `denied`. A path outside the list is 403; no list is 400.
 - **Document statuses**: `queued`, `processing`, `success`, `validation`, `validated`, `invalid`, `failed`, `split`.
 
@@ -108,7 +111,13 @@ forwards `admin/update` or `admin/installer.bat`.
   `params.platform = true`, `params.requestedBy = <username>`, `params.bot = <path>.flow.json`, and removes
   `params.url` and `params.authHeader`. DocFlow must accept a `start_bot` delivery with `platform: true` and no URL.
 - **Email inbox** (`intake.email`): the Command Center reads the mailbox itself and only stores the settings here.
-  It adds `requestedBy`. Secrets are vault references, never passwords.
+  It adds `requestedBy`. Secrets are vault references, never passwords. `kind` is `microsoft`, `imap`, `gmail` or
+  `pop3` (3.3.0).
+- **E-mail and cloud storage deliveries** (3.3.0, `type` `email` / `cloud_storage`): the Command Center sets
+  `params.requestedBy` and, for a `secretRef`, checks that person may use that vault entry.
+- **Checks that notify** (3.3.0, `action` `notify`): the Command Center sets the rule's `requestedBy`. Checks with
+  `action` `route` send the document to the process in `routeTo`.
+- **`intake.upload`** (3.3.0, default true): false refuses uploads from the screens; agents and routes still send.
 
 ## Calls from DocFlow to the Command Center
 
@@ -118,6 +127,8 @@ Both go to `DOCAUTO_PLATFORM_URL` (in SaaS `{tenant}` in it is replaced by the t
 | Call | Body | Command Center does |
 |---|---|---|
 | `POST /api/docflow-callback/start-bot` | `{"bot", "pool", "requestedBy", "input": <document payload>}`. The payload has `documentId`, `flowId`, `flowName`, `status`, `fileName`, `fields`, ... | Starts the agent as `requestedBy`, filling its inputs `document`, `document_id`, `process`, `status`, `file_name` and any field by name |
+| `POST /api/docflow-callback/send-mail` (3.3.0) | `{"requestedBy", "to": [...], "subject", "body", "attachments": [{"name", "contentType", "base64"}]}` | Sends through Settings > Mail as `requestedBy`; `to` may name people, roles and teams. 4xx is final |
+| `POST /api/docflow-callback/secret` (3.3.0) | `{"requestedBy", "ref"}` | `{"value"}` when `requestedBy` may use that vault entry, else 403 |
 | `POST /api/docflow-callback/events` | `{"event", "event_id", "document_id", "process_id", "process", "status", "file_name", "doc_type", "fields", "at"}` | Not built yet: see below |
 
 ## Known gaps (2026-11-07)
