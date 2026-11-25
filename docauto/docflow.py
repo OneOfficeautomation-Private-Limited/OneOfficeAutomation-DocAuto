@@ -263,7 +263,8 @@ class Rule(BaseModel):
 
 class Delivery(BaseModel):
     id: str = ""
-    type: Literal["webhook", "folder", "excel", "start_bot"]
+    # email: sent by the Command Center (its mail settings); cloud_storage: files PUT to S3 / Azure Blob / a web address
+    type: Literal["webhook", "folder", "excel", "start_bot", "email", "cloud_storage"]
     name: str = ""
     enabled: bool = True
     on: list[str] = Field(default_factory=lambda: ["success", "validated"])
@@ -1122,6 +1123,18 @@ class DocFlowService:
                 raise InvalidInput(f"delivery '{d.name or d.type}': URL must start with http:// or https://")
             if d.type in ("folder", "excel") and not d.params.get("path"):
                 raise InvalidInput(f"delivery '{d.name or d.type}': path is required")
+            if d.type == "email" and not [a for a in d.params.get("to") or [] if str(a).strip()]:
+                raise InvalidInput(f"delivery '{d.name or d.type}': give at least one address or person to send to")
+            if d.type == "cloud_storage":
+                need = {"s3": ("bucket", "accessKey"), "azure_blob": ("container",), "http_put": ("url",)}.get(d.params.get("provider"))
+                if need is None:
+                    raise InvalidInput(f"delivery '{d.name or d.type}': choose S3, Azure Blob or a web address")
+                missing = [k for k in need if not str(d.params.get(k) or "").strip()]
+                if missing:
+                    raise InvalidInput(f"delivery '{d.name or d.type}': {', '.join(missing)} is required")
+                addr = str(d.params.get("container") or d.params.get("url") or d.params.get("endpoint") or "https://")
+                if not addr.startswith(("http://", "https://")):
+                    raise InvalidInput(f"delivery '{d.name or d.type}': the address must start with https://")
 
     def save_flow(self, fl: Flow, new: bool = False, check_folders: bool = True) -> Flow:
         self._check_flow(fl)
@@ -1742,11 +1755,73 @@ class DocFlowService:
             if dv.type == "excel":
                 self._append_excel(Path(dv.params["path"]), body)
                 return True, dv.params["path"], False
+            if dv.type in ("email", "cloud_storage"):
+                return self._send_out(dv, doc_id, status, body)
             return False, f"unknown delivery type '{dv.type}'", False
         except OSError as e:   # folder offline, workbook open in Excel...: try again later
             return False, f"{type(e).__name__}: {e}", True
         except Exception as e:
             return False, f"{type(e).__name__}: {e}", False
+
+    def _files(self, dv: Delivery, doc_id: str, body: dict) -> list[tuple[str, bytes, str]]:
+        """The files a delivery sends: the original (decrypted), the results as JSON, and the text as Markdown, as its
+        params ask (files: original, json, markdown; default original and json)."""
+        want = dv.params.get("files") or ["original", "json"]
+        stem = Path(body.get("fileName") or doc_id).stem
+        out = []
+        f = self.store.file_bytes(doc_id)
+        if "original" in want and f:
+            from .preprocess import sniff_mime
+            out.append((f"{stem}_{doc_id[:8]}{Path(f[1]).suffix}", f[0], sniff_mime(f[0], f[1])))
+        if "json" in want:
+            out.append((f"{stem}_{doc_id[:8]}.json", json.dumps(body, ensure_ascii=False, indent=2, default=str).encode("utf-8"),
+                        "application/json"))
+        if "markdown" in want:
+            res = self.store.get_result(doc_id)
+            if res:
+                out.append((f"{stem}_{doc_id[:8]}.md", document_markdown(res, body).encode("utf-8"), "text/markdown"))
+        return out
+
+    def _platform(self, path: str, payload: dict, timeout: float = 30) -> dict:
+        """A call to the Command Center's DocFlow callbacks (this service's token, the tenant)."""
+        base = events.platform_base(self.tenant)
+        if not base:
+            raise RuntimeError("DOCAUTO_PLATFORM_URL is not set: DocFlow does not know where the Command Center is")
+        r = httpx.post(base + "/api/docflow-callback/" + path, json=payload, timeout=timeout,
+                       headers={"X-OOA-Tenant": self.tenant, **events.platform_auth()})
+        if r.status_code >= 300:
+            raise RuntimeError(f"the Command Center refused ({r.status_code}): {r.text[:300]}")
+        return r.json() if r.content else {}
+
+    def _send_out(self, dv: Delivery, doc_id: str, status: str, body: dict) -> tuple[bool, str, bool]:
+        """E-mail (sent by the Command Center) and cloud storage (uploaded from here) deliveries."""
+        import base64
+        from . import storage_put
+        files = self._files(dv, doc_id, body)
+        try:
+            if dv.type == "email":
+                subject = str(dv.params.get("subject") or "{process}: {file} ({status})")
+                for k, v in (("process", body.get("flowName") or ""), ("file", body.get("fileName") or doc_id),
+                             ("status", status), ("type", body.get("docTypeName") or "")):
+                    subject = subject.replace("{" + k + "}", str(v))
+                lines = [f"{k}: {v}" for k, v in (body.get("fields") or {}).items() if not isinstance(v, (list, dict))]
+                text = (str(dv.params.get("message")) + "\n\n" if dv.params.get("message") else "") + "\n".join(lines)
+                self._platform("send-mail", {"requestedBy": dv.params.get("requestedBy", ""), "to": dv.params.get("to"),
+                                             "subject": subject[:200], "body": text, "attachments": [
+                                                 {"name": n, "contentType": t, "base64": base64.b64encode(b).decode()}
+                                                 for n, b, t in files]})
+                return True, "mail to " + ", ".join(map(str, dv.params.get("to") or [])), False
+            secret = ""
+            if dv.params.get("secretRef"):
+                secret = str(self._platform("secret", {"requestedBy": dv.params.get("requestedBy", ""),
+                                                       "ref": dv.params["secretRef"]}).get("value") or "")
+            where = [storage_put.put_file(dv.params, n, b, t, secret, env_number("DOCAUTO_WEBHOOK_TIMEOUT", 60, 1, 600))
+                     for n, b, t in files]
+            return True, ", ".join(where), False
+        except httpx.HTTPError as e:
+            return False, f"{type(e).__name__}: {e}", True
+        except RuntimeError as e:   # a 4xx answer is a refusal (wrong key, no access): trying again will not help
+            return False, str(e), not re.search(r"\(4\d\d\)|HTTP 4\d\d", str(e))
 
     def _append_excel(self, path: Path, body: dict) -> None:
         from openpyxl import Workbook, load_workbook

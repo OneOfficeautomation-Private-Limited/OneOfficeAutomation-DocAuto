@@ -515,3 +515,96 @@ def test_a_new_process_never_takes_a_deleted_ones_documents(monkeypatch):
     new = df.save_flow(Flow(name="AP", docTypes=["invoice"]), new=True)
     assert new.id != old.id and not svc.store.instance_documents(new.id, None, 10)
     svc.close()
+
+
+# ------------------------------------------------------------------ e-mail and cloud storage deliveries (O6)
+def _standin():
+    """A small HTTP server that records requests: the Command Center's callbacks and a storage service."""
+    import json as _json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    seen = []
+
+    class H(BaseHTTPRequestHandler):
+        def _do(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(n)
+            seen.append({"method": self.command, "path": self.path, "headers": dict(self.headers), "body": body})
+            out = b"{}"
+            if self.path.endswith("/secret"):
+                out = _json.dumps({"value": "sv=2026&sig=abc"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+        do_POST = do_PUT = _do
+
+        def log_message(self, *a):
+            pass
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, seen
+
+
+def test_email_and_cloud_storage_deliveries(monkeypatch):
+    import base64
+    import json as _json
+    from tests.conftest import make_config
+    from tests.test_einvoice import invoice_pdf
+    from docauto.docflow import Delivery, DocFlowService, Flow
+    from docauto.errors import InvalidInput
+    from docauto.pipeline import DocumentService
+    import pytest
+    srv, seen = _standin()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    monkeypatch.setenv("DOCAUTO_FOLDER_WATCHER", "false")
+    monkeypatch.setenv("DOCAUTO_PLATFORM_URL", base)
+    monkeypatch.setenv("DOCAUTO_API_TOKEN", "tok")
+    svc = DocumentService(make_config())
+    df = DocFlowService(svc)
+    fl = df.save_flow(Flow(name="Out", docTypes=["invoice"], deliveries=[
+        Delivery(type="email", name="Mail", on=["success", "validation"], params={"to": ["ap@example.com", "role:finance"], "requestedBy": "ann"}),
+        Delivery(type="cloud_storage", name="Blob", on=["success", "validation"], params={
+            "provider": "azure_blob", "container": base + "/acct/invoices", "prefix": "2026", "secretRef": "store/blob/sas",
+            "requestedBy": "ann", "files": ["original", "json", "markdown"]})]), new=True)
+    d = df.upload(fl.id, invoice_pdf(["ACME", "Invoice", "Invoice Number: INV-5", "Total: 5.00 EUR"]), "inv.pdf", wait=True)
+    import time
+    for _ in range(100):
+        if len([x for x in seen if x["method"] == "PUT"]) >= 3 and any(x["path"].endswith("send-mail") for x in seen):
+            break
+        time.sleep(0.1)
+    mail = next(x for x in seen if x["path"] == "/api/docflow-callback/send-mail")
+    m = _json.loads(mail["body"])
+    assert mail["headers"]["Authorization"] == "Bearer tok" and m["to"] == ["ap@example.com", "role:finance"] and m["requestedBy"] == "ann"
+    assert "Out: inv.pdf" in m["subject"] and {a["name"].rsplit(".", 1)[1] for a in m["attachments"]} == {"pdf", "json"}
+    assert base64.b64decode(m["attachments"][0]["base64"]).startswith(b"%PDF")
+    secret = next(x for x in seen if x["path"] == "/api/docflow-callback/secret")
+    assert _json.loads(secret["body"]) == {"requestedBy": "ann", "ref": "store/blob/sas"}
+    puts = [x for x in seen if x["method"] == "PUT"]
+    assert {p["path"].split("?")[0].rsplit(".", 1)[1] for p in puts} == {"pdf", "json", "md"}
+    assert all(p["path"].startswith("/acct/invoices/2026/inv_") and p["path"].endswith("?sv=2026&sig=abc") and
+               p["headers"]["x-ms-blob-type"] == "BlockBlob" for p in puts)
+    with pytest.raises(InvalidInput):
+        df.save_flow(Flow(name="Bad", deliveries=[Delivery(type="email", params={"to": []})]), new=True)
+    with pytest.raises(InvalidInput):
+        df.save_flow(Flow(name="Bad2", deliveries=[Delivery(type="cloud_storage", params={"provider": "s3", "bucket": "b"})]), new=True)
+    svc.close()
+    srv.shutdown()
+
+
+def test_s3_signature_version_4():
+    import datetime as dt
+    from docauto.storage_put import object_url, s3_request
+    h = s3_request("PUT", "https://s3.eu-central-1.amazonaws.com/bucket/a.pdf", "eu-central-1", "AKID", "SECRET", b"x",
+                   {"Content-Type": "application/pdf"}, now=dt.datetime(2026, 11, 25, 12, 0, tzinfo=dt.timezone.utc))
+    assert h["x-amz-date"] == "20261125T120000Z"
+    assert h["Authorization"].startswith("AWS4-HMAC-SHA256 Credential=AKID/20261125/eu-central-1/s3/aws4_request, "
+                                         "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=")
+    again = s3_request("PUT", "https://s3.eu-central-1.amazonaws.com/bucket/a.pdf", "eu-central-1", "AKID", "OTHER", b"x",
+                       {"Content-Type": "application/pdf"}, now=dt.datetime(2026, 11, 25, 12, 0, tzinfo=dt.timezone.utc))
+    assert again["Authorization"] != h["Authorization"]
+    assert object_url({"provider": "s3", "bucket": "b", "region": "ap-south-1", "prefix": "/in/"}, "a b.pdf") == \
+        "https://s3.ap-south-1.amazonaws.com/b/in/a%20b.pdf"
+    assert object_url({"provider": "s3", "bucket": "b", "endpoint": "https://minio.local:9000"}, "x.pdf") == "https://minio.local:9000/b/x.pdf"
+    assert object_url({"provider": "http_put", "url": "https://files.example.com/up/{file}"}, "x.pdf") == "https://files.example.com/up/x.pdf"
