@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from . import connections
 from .provider import BaseProvider, Capability, ProviderContext, ProviderInfo
 
 log = logging.getLogger("docauto.registry")
@@ -43,6 +44,9 @@ class ProviderRegistry:
     def __init__(self, config: dict):
         self.config = config
         self.providers: dict[str, RegisteredProvider] = {}
+        self.tenant = (config.get("storage") or {}).get("tenant") or "default"
+        #: 3.4.0: the Model connections the Command Center has for the AI engines (read once per discovery)
+        self.connections: dict[str, dict] = {}
 
     def register(self, instance: BaseProvider, info: ProviderInfo, settings: dict | None = None) -> None:
         """Programmatic registration (built-ins and tests)."""
@@ -55,7 +59,15 @@ class ProviderRegistry:
     def discover(self) -> None:
         root = Path(self.config["options_dir"])
         enabled_packs = {k for k, v in self.config.get("option_packs", {}).items() if v}
+        found = []
         for manifest_path in sorted(root.glob("*/*/manifest.json")):
+            try:
+                found.append((manifest_path, json.loads(manifest_path.read_text(encoding="utf-8")).get("id")))
+            except Exception:
+                found.append((manifest_path, None))
+        self.connections = connections.fetch(
+            self.tenant, [i for p, i in found if i and p.parent.parent.name in enabled_packs])
+        for manifest_path, _ in found:
             pack = manifest_path.parent.parent.name
             try:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -71,6 +83,8 @@ class ProviderRegistry:
 
     def _load(self, manifest: dict, info: ProviderInfo, folder: Path) -> None:
         settings = self.config.get("providers", {}).get("settings", {}).get(info.id, {})
+        if info.id in self.connections:   # the key (and model, address) from a Model connection, in memory only
+            settings = connections.apply(info.id, settings, self.connections[info.id])
         try:
             module_file = folder / manifest.get("module", "provider.py")
             spec = importlib.util.spec_from_file_location(f"docauto_option_{info.id.replace('-', '_')}", module_file)
@@ -80,8 +94,10 @@ class ProviderRegistry:
             inst: BaseProvider = cls()
             inst.info = info
             inst.init(ProviderContext(config=settings.get("config", {}),
-                                      credentials=settings.get("credentials", {})))
+                                      credentials=settings.get("credentials", {}), tenant_id=self.tenant))
             health = inst.health_check()
+            if info.id in self.connections and health.ok:
+                health.message = f"{health.message} · key from {connections.describe(self.connections[info.id])}"
             self.providers[info.id] = RegisteredProvider(info, inst, health.ok, health.message, str(folder))
         except Exception as e:
             log.warning("provider %s unavailable: %s", info.id, e)

@@ -351,6 +351,14 @@ def get_settings(tenant: str = Depends(auth)):
     return out
 
 
+@app.post(f"{API}/admin/reload")
+def reload_engines(tenant: str = Depends(auth)):
+    """Loads the engines again (3.4.0): the Command Center calls it after a Model connection is chosen for an engine,
+    so its key is used at once."""
+    svc = reload_service()
+    return {"providers": svc.providers()}
+
+
 class SettingsUpdate(BaseModel):
     values: dict[str, Any]
 

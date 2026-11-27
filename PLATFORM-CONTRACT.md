@@ -30,6 +30,8 @@ DocFlow ──> Command Center /api/docflow-callback/start-bot   ("Start a bot" 
 DocFlow ──> Command Center /api/docflow-callback/events      (document events; see "Known gaps")
 DocFlow ──> Command Center /api/docflow-callback/send-mail   (e-mail deliveries, "tell people" checks; 3.3.0)
 DocFlow ──> Command Center /api/docflow-callback/secret      (vault keys for cloud storage deliveries; 3.3.0)
+DocFlow ──> Command Center /api/docflow-callback/credentials (AI engine keys from Model connections; 3.4.0)
+Command Center ──> DocFlow POST /api/docs/v1/admin/reload  (load the engines again; 3.4.0)
 ```
 
 The browser never sees DocFlow's address or token.
@@ -138,6 +140,7 @@ Both go to `DOCAUTO_PLATFORM_URL` (in SaaS `{tenant}` in it is replaced by the t
 | `POST /api/docflow-callback/start-bot` | `{"bot", "pool", "requestedBy", "input": <document payload>}`. The payload has `documentId`, `flowId`, `flowName`, `status`, `fileName`, `fields`, ... | Starts the agent as `requestedBy`, filling its inputs `document`, `document_id`, `process`, `status`, `file_name` and any field by name |
 | `POST /api/docflow-callback/send-mail` (3.3.0) | `{"requestedBy", "to": [...], "subject", "body", "attachments": [{"name", "contentType", "base64"}]}` | Sends through Settings > Mail as `requestedBy`; `to` may name people, roles and teams. 4xx is final |
 | `POST /api/docflow-callback/secret` (3.3.0) | `{"requestedBy", "ref"}` | `{"value"}` when `requestedBy` may use that vault entry, else 403 |
+| `POST /api/docflow-callback/credentials` (3.4.0) | `{"engines": ["claude", ...]}` (asked once when DocFlow loads its engines) | `{"engines": {id: {connection, provider, model, baseUrl, apiKey \| accessKeyId + secretAccessKey, region?}}, "refused": {id: reason}}`: only engines with a Model connection chosen in the Command Center, whose provider fits; kept in memory, never on disk; an engine left out uses its typed key |
 | `POST /api/docflow-callback/events` | `{"event", "event_id", "document_id", "process_id", "process", "status", "file_name", "doc_type", "fields", "at"}` | Not built yet: see below |
 
 ## Known gaps (2026-11-07)
