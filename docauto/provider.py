@@ -130,5 +130,7 @@ class ExtractionProvider(BaseProvider):
     def extract(self, req: ExtractRequest) -> list[ExtractedField]:  # pragma: no cover - interface
         raise NotImplementedError
 
-    def classify(self, doc: DocumentResult, labels: list[str]) -> Classification:
+    def classify(self, doc: DocumentResult, labels: list[str],
+                 descriptions: Optional[dict[str, str]] = None) -> Classification:
+        """One of `labels` (or "other"); `descriptions` gives each label's plain-words description (3.4.0)."""
         raise NotImplementedError

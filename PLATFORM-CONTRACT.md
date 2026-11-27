@@ -104,6 +104,11 @@ forwards `admin/update` or `admin/installer.bat`.
   set by `DOCAUTO_FOLDER_LIST_MAX`). `access` is `ok` (read and move
   files), `read`, `missing` or `denied`. A path outside the list is 403; no list is 400.
 - **Document statuses**: `queued`, `processing`, `success`, `validation`, `validated`, `invalid`, `failed`, `split`.
+- **Recognising document types** (3.4.0): the admin setting `DOCAUTO_DEFAULT_CLASSIFY` (`admin/settings`, kind
+  `extraction`) names the engine that recognises each page's type in processes, from every type's name and
+  `description`; empty means the words on the page (as before). An engine that may not run (unknown, cloud opt-in off,
+  missing key) or fails falls back to the words on the page, with a warning on the document. Each page asked is a
+  `classify` step in `provenance` and in the usage meter.
 
 ### What the Command Center adds to a process before saving it
 

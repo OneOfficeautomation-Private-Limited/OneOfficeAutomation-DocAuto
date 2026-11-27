@@ -13,10 +13,11 @@ import base64
 import io
 import json
 import re
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
+from docauto import recognise
 from docauto.errors import AuthFailed, ProviderError, ProviderTimeout, RateLimited
 from docauto.extraction import coerce
 from docauto.models import Classification, DocumentResult, ExtractedField, FieldSchema
@@ -198,10 +199,10 @@ class LlmExtractionProvider(ExtractionProvider):
             except (ValueError, json.JSONDecodeError) as e:
                 raise ProviderError(f"model returned invalid JSON twice: {e}", self.info.id)
 
-    def classify(self, doc: DocumentResult, labels: list[str]) -> Classification:
-        text = doc.text[:8000]
-        content = self._chat(f"Classify this document into exactly one of {json.dumps(labels, ensure_ascii=False)} "
-                             f"or \"other\". Reply as {{\"label\": \"...\", \"confidence\": 0..1}}.\n\n{text}")
+    def classify(self, doc: DocumentResult, labels: list[str], descriptions: Optional[dict[str, str]] = None) -> Classification:
+        # every type's name and description (3.4.0)
+        content = self._chat(recognise.question(list(labels), descriptions, doc.text)
+                             + "\n\nReply as {\"label\": \"...\", \"confidence\": 0..1}.")
         try:
             d = json.loads(re.search(r"\{.*\}", content, re.S).group(0))
         except Exception as e:

@@ -23,7 +23,9 @@ import io
 import json
 import os
 from pathlib import Path
+from typing import Optional
 
+from docauto import recognise
 from docauto.errors import AuthFailed, DocAutoError, ProviderError, ProviderTimeout, RateLimited
 from docauto.models import Classification, DocumentResult, ExtractedField, FieldDef, FieldSchema
 from docauto.provider import ExtractionProvider, ExtractRequest, HealthStatus
@@ -183,12 +185,11 @@ class ClaudeExtractionProvider(ExtractionProvider):
         except (ValueError, json.JSONDecodeError) as e:
             raise ProviderError(f"invalid JSON from Claude: {e}", self.info.id)
 
-    def classify(self, doc: DocumentResult, labels: list[str]) -> Classification:
+    def classify(self, doc: DocumentResult, labels: list[str], descriptions: Optional[dict[str, str]] = None) -> Classification:
         out = {"type": "object", "properties": {"label": {"type": "string", "enum": list(labels) + ["other"]},
                                                 "confidence": {"type": "number"}},
                "required": ["label", "confidence"], "additionalProperties": False}
-        prompt = (f"Classify this document into exactly one of {json.dumps(labels, ensure_ascii=False)} "
-                  f"or \"other\".\n\n{doc.text[:8000]}")
+        prompt = recognise.question(list(labels), descriptions, doc.text)   # every type's name and description (3.4.0)
         try:
             d = json.loads(self._call([{"type": "text", "text": prompt}], out, 4000))
         except json.JSONDecodeError as e:

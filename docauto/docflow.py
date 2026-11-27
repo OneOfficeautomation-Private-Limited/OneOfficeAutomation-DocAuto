@@ -36,6 +36,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from . import einvoice, events, folders, outbox, pii
+from .provider import Capability
 from .errors import DocAutoError, InvalidInput, PolicyDenied
 from .extraction import coerce, safe_eval
 from .grounding import locations
@@ -739,6 +740,12 @@ def _ods_rows(data: bytes) -> list[list[str]]:
 
 
 # ================================================================== classification & split
+class _PageText:
+    """A page's text as an engine's classify() reads it (it uses .text only)."""
+    def __init__(self, text: str):
+        self.text = text
+
+
 def classify_page(text: str, doctypes: list[DocType]) -> tuple[Optional[str], float, dict[str, float]]:
     low = text.lower()
     scores = {}
@@ -762,14 +769,19 @@ def start_anchor(dt: DocType) -> Optional[str]:
     return req.label.split("/")[0].strip().lower()
 
 
-def split_pages(pages_text: list[str], doctypes: list[DocType], min_score: float, split: bool) -> list[dict]:
-    """Group pages into documents: [{doctype, pages:[1..], score}]. doctype None = unclassified."""
+def split_pages(pages_text: list[str], doctypes: list[DocType], min_score: float, split: bool,
+                labels: Optional[list[tuple[Optional[str], float]]] = None) -> list[dict]:
+    """Group pages into documents: [{doctype, pages:[1..], score}]. doctype None = unclassified. `labels`: each page's
+    type and score as an engine recognised them (3.4.0); without them, the words on the page."""
     by_id = {d.id: d for d in doctypes}
     segs: list[dict] = []
     for i, txt in enumerate(pages_text, 1):
-        dt_id, score, _ = classify_page(txt, doctypes)
-        if score < min_score:
-            dt_id = None
+        if labels is not None:
+            dt_id, score = labels[i - 1]
+        else:
+            dt_id, score, _ = classify_page(txt, doctypes)
+            if score < min_score:
+                dt_id = None
         anchor = start_anchor(by_id[dt_id]) if dt_id else None
         starts_new = bool(anchor and anchor in txt.lower())
         cur = segs[-1] if segs else None
@@ -1260,7 +1272,13 @@ class DocFlowService:
                 dt = self.doctype(opt.doctypeId)
             except InvalidInput:
                 dt = None
-        if dt is not None and fl.classify.checkType and fl.classify.mode == "single" and dt.keywords:
+        if dt is not None and fl.classify.checkType and fl.classify.mode == "single" and self._recogniser(opt) is not None:
+            # 3.4.0: the recognise engine is asked whether it is this type (its description), or another document
+            got = self._recognise_pages([result.text or ""], [dt], doc_id, opt, result)
+            if got is not None and got[0][0] is None:
+                result.warnings.append(f"Does not look like {dt.name}: the recognise engine did not take it for one")
+                dt = None
+        elif dt is not None and fl.classify.checkType and fl.classify.mode == "single" and dt.keywords:
             # the type's own recognition words (not its field labels: "Total" is on many kinds of document)
             low = (result.text or "").lower()
             if not any(re.search(r"(?<![\w])" + re.escape(k.lower().strip()) + r"(?![\w])", low) for k in dt.keywords if k.strip()):
@@ -1332,10 +1350,60 @@ class DocFlowService:
         self.store.save_result(result)  # also persists lookup enrichment
         return new
 
+    #: below this an AI engine's answer counts as "fits no type" (its own confidence, 0-1)
+    RECOGNISE_MIN = 0.5
+
+    def _recogniser(self, opt: ProcessOptions):
+        """The engine that recognises document types (DOCAUTO_DEFAULT_CLASSIFY), when one is set and may run; None:
+        the words on the page."""
+        engine = (os.environ.get("DOCAUTO_DEFAULT_CLASSIFY") or "").strip()
+        if not engine:
+            return None
+        try:
+            found = [p for p in self.svc.router.candidates("extraction", [Capability.CLASSIFY], [], engine, "extraction", strict=True)
+                     if p.info.runsLocally or not opt.localOnly]
+        except DocAutoError as e:
+            log.warning("recognise engine %s not used: %s", engine, e)
+            return None
+        return found[0] if found else None
+
+    def _recognise_pages(self, texts: list[str], types: list[DocType], doc_id: str, opt: ProcessOptions,
+                         result: DocumentResult) -> Optional[list[tuple[Optional[str], float]]]:
+        """Each page's type as the recognise engine sees it, from every type's name and description (3.4.0), or
+        None to use the words on the page (no engine set, it may not run, or it failed: noted on the document).
+        A page with no text keeps the words' answer (nothing to recognise); a cloud AI engine sees masked text."""
+        prov = self._recogniser(opt)
+        if prov is None:
+            if (os.environ.get("DOCAUTO_DEFAULT_CLASSIFY") or "").strip():
+                result.warnings.append("Recognised by the words on the page: the recognise engine may not run here")
+            return None
+        names = {dt.name: dt.id for dt in types}
+        descriptions = {dt.name: dt.description for dt in types}
+        masks = self.svc._masks(prov, opt)
+        out: list[tuple[Optional[str], float]] = []
+        asked = 0
+        try:
+            for txt in texts:
+                if not txt.strip():
+                    out.append((None, 0.0))
+                    continue
+                shown = pii.PiiMasker().mask(txt) if masks else txt
+                c = prov.instance.classify(_PageText(shown), list(names), descriptions)
+                asked += 1
+                dt_id = names.get(c.label)
+                out.append((dt_id if dt_id and c.confidence >= self.RECOGNISE_MIN else None, round(float(c.confidence), 3)))
+        except DocAutoError as e:
+            result.warnings.append(f"Recognised by the words on the page: {prov.info.id} failed ({e})")
+            return None
+        if asked:
+            self.svc._meter(None, doc_id, opt, prov, Capability.CLASSIFY, asked, "classify", result)
+        return out
+
     def _split(self, fl: Flow, doc_id: str, result: DocumentResult, opt: ProcessOptions) -> str:
         types = self.flow_doctypes(fl)
         texts = ["\n".join(l.text for l in p.lines) for p in result.pages]
-        segs = split_pages(texts, types, fl.classify.minScore, fl.classify.split)
+        segs = split_pages(texts, types, fl.classify.minScore, fl.classify.split,
+                           self._recognise_pages(texts, types, doc_id, opt, result))
         data, file_name, mime = self.store.file_bytes(doc_id)
         stem, by_id = Path(file_name).stem, {d.id: d for d in types}
         for i, s in enumerate(segs, 1):

@@ -47,6 +47,10 @@ DEFAULTS = [
     {"key": "DOCAUTO_DEFAULT_OCR", "label": "Document OCR engine", "type": "engine", "kind": "ocr", "default": "tesseract"},
     {"key": "DOCAUTO_DEFAULT_EXTRACTION", "label": "Extraction engine", "type": "engine", "kind": "extraction",
      "default": "builtin-rules"},
+    {"key": "DOCAUTO_DEFAULT_CLASSIFY", "label": "Recognise and split engine", "type": "engine", "kind": "extraction",
+     "default": "", "allowEmpty": True,
+     "help": "The AI engine that recognises each page's document type from the types' descriptions (3.4.0). Empty: "
+             "the words on the page (on this server, offline)."},
     {"key": "DOCAUTO_CLOUD_OPT_IN", "label": "Cloud opt-in", "type": "bool", "default": "false",
      "help": "Off = local-only: no engine that sends documents off this machine may run (OneConnect, cloud OneMind)."},
     {"key": "DOCAUTO_ESCALATE_THRESHOLD", "label": "Retry pages below this OCR confidence (0-1)", "type": "number",
