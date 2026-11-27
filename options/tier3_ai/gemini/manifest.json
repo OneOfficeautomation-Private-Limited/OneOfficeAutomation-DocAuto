@@ -1,0 +1,18 @@
+{
+  "id": "gemini",
+  "displayName": "Google Gemini",
+  "version": "1.0.0",
+  "vendor": "Google",
+  "tier": 3,
+  "kind": "extraction",
+  "entrypoint": "GeminiProvider",
+  "capabilities": ["extract_schema", "classify"],
+  "languages": ["*"],
+  "runsLocally": false,
+  "regions": [],
+  "creditCostPerPage": {"extract_schema": 8, "classify": 1},
+  "credentialTypes": ["api_key"],
+  "license": "Commercial (BYOK or resold)",
+  "configSchema": {"service": "ai-studio (Google AI Studio) | vertex (Vertex AI, express mode with an API key)", "model": "e.g. gemini-2.5-flash", "sendImages": true, "region": "processing region for residency policy"},
+  "notes": "Gemini's generateContent with a JSON reply; page images sent inline. Same prompt and hallucination guard as the OpenAI-compatible connector."
+}

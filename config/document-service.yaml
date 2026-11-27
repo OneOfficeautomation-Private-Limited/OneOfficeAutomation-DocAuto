@@ -60,6 +60,31 @@ providers:
         region: ${CLAUDE_REGION:-}
       credentials:
         apiKey: ${CLAUDE_API_KEY:-}
+    gemini:
+      config:
+        service: ${GEMINI_SERVICE:-ai-studio}     # ai-studio | vertex (express mode, API key)
+        model: ${GEMINI_MODEL:-gemini-2.5-flash}
+        sendImages: ${GEMINI_SEND_IMAGES:-true}
+        region: ${GEMINI_REGION:-}
+      credentials:
+        apiKey: ${GEMINI_API_KEY:-}
+    bedrock:
+      config:
+        region: ${BEDROCK_REGION:-}
+        model: ${BEDROCK_MODEL:-}
+        sendImages: ${BEDROCK_SEND_IMAGES:-true}
+      credentials:
+        accessKeyId: ${BEDROCK_ACCESS_KEY_ID:-}
+        secretAccessKey: ${BEDROCK_SECRET_ACCESS_KEY:-}
+    azure-openai:
+      config:
+        endpoint: ${AZURE_OPENAI_ENDPOINT:-}
+        deployment: ${AZURE_OPENAI_DEPLOYMENT:-}
+        apiVersion: ${AZURE_OPENAI_API_VERSION:-2024-10-21}
+        sendImages: ${AZURE_OPENAI_SEND_IMAGES:-true}
+        region: ${AZURE_OPENAI_REGION:-}
+      credentials:
+        apiKey: ${AZURE_OPENAI_KEY:-}
     llm-local:
       config:
         baseUrl: ${LOCAL_LLM_BASE_URL:-}
@@ -69,7 +94,7 @@ providers:
 defaults:
   screen_ocr: ${DOCAUTO_DEFAULT_SCREEN_OCR:-tesseract}
   document_ocr: ${DOCAUTO_DEFAULT_OCR:-tesseract}      # tesseract | paddleocr | azure-di | google-docai | aws-textract
-  extraction: ${DOCAUTO_DEFAULT_EXTRACTION:-builtin-rules}   # builtin-rules | claude | llm-local | llm-cloud
+  extraction: ${DOCAUTO_DEFAULT_EXTRACTION:-builtin-rules}   # builtin-rules | claude | gemini | bedrock | azure-openai | llm-local | llm-cloud
 
 routing:
   cloud_opt_in: ${DOCAUTO_CLOUD_OPT_IN:-false}   # false = local-only: no engine that sends data off this machine runs

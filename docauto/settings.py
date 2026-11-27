@@ -166,6 +166,38 @@ ENGINES: dict[str, dict[str, Any]] = {
          "help": "Used by the residency policy."},
         {"key": "CLAUDE_SEND_IMAGES", "label": "Send page images (better on scans)", "type": "bool", "default": "true"}],
         "install": "pip install anthropic"},
+    # 3.4.0: direct connections to the big AI services, each reading documents and pages with the shared prompt
+    "gemini": {"fields": [
+        {"key": "GEMINI_SERVICE", "label": "Service", "type": "select", "options": ["ai-studio", "vertex"], "default": "ai-studio",
+         "help": "ai-studio: Google AI Studio. vertex: Vertex AI in your Google Cloud project (express mode, with an API key)."},
+        {"key": "GEMINI_API_KEY", "label": "API key", "type": "secret", "default": ""},
+        {"key": "GEMINI_MODEL", "label": "Model", "type": "text", "default": "gemini-2.5-flash",
+         "suggestions": ["gemini-2.5-flash", "gemini-2.5-pro"], "help": "Any Gemini model that reads images."},
+        {"key": "GEMINI_REGION", "label": "Processing region", "type": "text", "default": "", "allowEmpty": True,
+         "help": "Used by the residency policy."},
+        {"key": "GEMINI_SEND_IMAGES", "label": "Send page images (better on scans)", "type": "bool", "default": "true"}],
+        "install": None},
+    "bedrock": {"fields": [
+        {"key": "BEDROCK_REGION", "label": "Region", "type": "text", "default": "", "placeholder": "us-east-1"},
+        {"key": "BEDROCK_MODEL", "label": "Model id", "type": "text", "default": "",
+         "help": "A Bedrock model or inference profile id that reads images, such as a Claude or Amazon Nova model "
+                 "enabled in your account."},
+        {"key": "BEDROCK_ACCESS_KEY_ID", "label": "Access key id", "type": "text", "default": "", "allowEmpty": True,
+         "help": "Empty: the server's own AWS role or profile."},
+        {"key": "BEDROCK_SECRET_ACCESS_KEY", "label": "Secret access key", "type": "secret", "default": ""},
+        {"key": "BEDROCK_SEND_IMAGES", "label": "Send page images (better on scans)", "type": "bool", "default": "true"}],
+        "install": "pip install boto3"},
+    "azure-openai": {"fields": [
+        {"key": "AZURE_OPENAI_ENDPOINT", "label": "Endpoint", "type": "text", "default": "",
+         "placeholder": "https://<resource>.openai.azure.com"},
+        {"key": "AZURE_OPENAI_DEPLOYMENT", "label": "Deployment name", "type": "text", "default": "",
+         "help": "The name of a deployed model that reads images."},
+        {"key": "AZURE_OPENAI_KEY", "label": "Key", "type": "secret", "default": ""},
+        {"key": "AZURE_OPENAI_API_VERSION", "label": "API version", "type": "text", "default": "2024-10-21"},
+        {"key": "AZURE_OPENAI_REGION", "label": "Region", "type": "text", "default": "", "allowEmpty": True,
+         "help": "The Azure region of the resource. Used by the residency policy."},
+        {"key": "AZURE_OPENAI_SEND_IMAGES", "label": "Send page images (better on scans)", "type": "bool", "default": "true"}],
+        "install": None},
     "llm-local": {"fields": [
         {"key": "LOCAL_LLM_BASE_URL", "label": "Server URL", "type": "text", "default": "",
          "placeholder": "http://localhost:11434/v1", "help": "Ollama, vLLM, LM Studio..."},

@@ -1,0 +1,19 @@
+{
+  "id": "bedrock",
+  "displayName": "Amazon Bedrock",
+  "version": "1.0.0",
+  "vendor": "Amazon Web Services",
+  "tier": 3,
+  "kind": "extraction",
+  "entrypoint": "BedrockProvider",
+  "capabilities": ["extract_schema", "classify"],
+  "languages": ["*"],
+  "runsLocally": false,
+  "regions": [],
+  "creditCostPerPage": {"extract_schema": 10, "classify": 2},
+  "credentialTypes": ["aws_access_key", "aws_role"],
+  "license": "Commercial (BYOK)",
+  "requires": {"python": ["boto3"]},
+  "configSchema": {"region": "AWS region, e.g. us-east-1 / eu-central-1", "model": "a Bedrock model or inference profile id, e.g. a Claude or Amazon Nova model", "sendImages": true},
+  "notes": "Bedrock's Converse API: one call shape for every model on Bedrock. Documents stay in the customer's AWS account and region."
+}

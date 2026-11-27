@@ -20,7 +20,7 @@ cryptography>=42
 pytesseract>=0.3.10
 # paddleocr / paddlepaddle  -> install only where wanted (large)
 # option pack 2 (cloud) - install per connector
-# boto3                     -> aws-textract
+# boto3                     -> aws-textract, bedrock
 # google-cloud-documentai   -> google-docai
 # (azure-di uses httpx, no SDK needed)
 # option pack 3 (AI): the Claude connector uses Anthropic's SDK; it stays off until a key is set

@@ -1,0 +1,18 @@
+{
+  "id": "azure-openai",
+  "displayName": "Azure OpenAI",
+  "version": "1.0.0",
+  "vendor": "Microsoft",
+  "tier": 3,
+  "kind": "extraction",
+  "entrypoint": "AzureOpenAIProvider",
+  "capabilities": ["extract_schema", "classify"],
+  "languages": ["*"],
+  "runsLocally": false,
+  "regions": [],
+  "creditCostPerPage": {"extract_schema": 10, "classify": 2},
+  "credentialTypes": ["api_key"],
+  "license": "Commercial (BYOK)",
+  "configSchema": {"endpoint": "https://<resource>.openai.azure.com", "deployment": "the deployment name of a vision model", "apiVersion": "2024-10-21", "sendImages": true, "region": "the Azure region of the resource"},
+  "notes": "A model deployed in the customer's own Azure resource; documents stay in that tenant's Azure region."
+}
