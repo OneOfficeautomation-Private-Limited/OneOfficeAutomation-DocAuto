@@ -93,6 +93,9 @@ Set the environment variables referenced in `config/document-service.yaml` and r
 | Google Gemini | `GEMINI_SERVICE` (`ai-studio` or `vertex`), `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-2.5-flash`), `GEMINI_REGION` |
 | Amazon Bedrock | `BEDROCK_REGION`, `BEDROCK_MODEL` (a model or inference profile id), `BEDROCK_ACCESS_KEY_ID`, `BEDROCK_SECRET_ACCESS_KEY` (empty: the server's own AWS role) (+ `pip install boto3`) |
 | Azure OpenAI | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_REGION` |
+| Azure Content Understanding (recognise and split) | `AZURE_CU_ENDPOINT`, `AZURE_CU_KEY`, `AZURE_CU_MODEL` (default `gpt-4.1`), `AZURE_CU_PROCESSING_LOCATION`, `AZURE_CU_REGION` |
+| Google Document AI splitter (recognise and split) | `GCP_PROJECT`, `DOCAI_LOCATION`, `DOCAI_SPLIT_PROCESSOR`, `DOCAI_SPLIT_VERSION`, `GOOGLE_APPLICATION_CREDENTIALS` (+ `pip install google-cloud-documentai`) |
+| Amazon Bedrock Data Automation (recognise and split) | `BDA_REGION`, `BDA_PROJECT_ARN`, `BDA_STAGE`, `BDA_PROFILE_ARN`, `BDA_ACCESS_KEY_ID`, `BDA_SECRET_ACCESS_KEY` (+ `pip install boto3`) |
 | LLM (self-hosted) | `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL` |
 
 Then make them the defaults, e.g. `defaults.document_ocr: azure-di`, `defaults.extraction: llm-cloud`. Profiles for air-gapped and SaaS deployments are in `config/profiles/`.

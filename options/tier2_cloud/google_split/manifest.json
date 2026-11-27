@@ -1,0 +1,20 @@
+{
+  "id": "google-docai-split",
+  "displayName": "Google Document AI splitter",
+  "version": "1.0.0",
+  "vendor": "Google",
+  "tier": 2,
+  "kind": "classify",
+  "entrypoint": "GoogleSplitProvider",
+  "capabilities": ["classify", "split"],
+  "languages": ["*"],
+  "runsLocally": false,
+  "regions": [],
+  "creditCostPerPage": {"classify": 5},
+  "supportedMimeTypes": ["application/pdf", "image/png", "image/jpeg", "image/tiff", "image/gif", "image/bmp", "image/webp"],
+  "credentialTypes": ["service_account_json"],
+  "license": "Commercial (BYOK)",
+  "requires": {"python": ["google-cloud-documentai"]},
+  "configSchema": {"projectId": "gcp project", "location": "us | eu", "processorId": "a Custom Splitter or Custom Classifier processor", "processorVersion": "optional: a processor version"},
+  "notes": "The kinds of document are set up in the Google processor, named as the process's document types."
+}

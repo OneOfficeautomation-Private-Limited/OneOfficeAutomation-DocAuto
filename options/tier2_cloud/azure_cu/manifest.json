@@ -1,0 +1,19 @@
+{
+  "id": "azure-content-understanding",
+  "displayName": "Azure Content Understanding",
+  "version": "1.0.0",
+  "vendor": "Microsoft",
+  "tier": 2,
+  "kind": "classify",
+  "entrypoint": "AzureContentUnderstandingProvider",
+  "capabilities": ["classify", "split"],
+  "languages": ["*"],
+  "runsLocally": false,
+  "regions": [],
+  "creditCostPerPage": {"classify": 5},
+  "supportedMimeTypes": ["application/pdf", "image/png", "image/jpeg", "image/tiff", "image/bmp", "image/heif"],
+  "credentialTypes": ["api_key"],
+  "license": "Commercial (BYOK)",
+  "configSchema": {"endpoint": "https://<resource>.services.ai.azure.com", "completionModel": "a completion model deployed for Content Understanding, e.g. gpt-4.1", "processingLocation": "geography | dataZone | global", "region": "the Azure region of the resource"},
+  "notes": "Recognises and splits from the types' names and descriptions, no training. An analyzer is made once per set of types."
+}

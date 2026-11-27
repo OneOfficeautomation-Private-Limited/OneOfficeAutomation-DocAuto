@@ -804,6 +804,42 @@ def split_pages(pages_text: list[str], doctypes: list[DocType], min_score: float
     return segs
 
 
+def _plain(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def parts_from_segments(segments: list, count: int, names: dict[str, str], min_conf: float,
+                        split: bool) -> list[dict]:
+    """A recognise-and-split service's parts as the flow's parts [{doctype, pages, score}] (3.4.0). A part's type is
+    matched to the process's types by name (case, spaces and signs ignored); below `min_conf` it fits none. Pages
+    the service left out become parts of their own with no type; a page in two parts stays in the first. `split`
+    False: one part for the whole file, as the most confident type."""
+    plain = {_plain(n): i for n, i in names.items()}
+    taken: set[int] = set()
+    out: list[dict] = []
+    for s in segments:
+        pages = [p for p in sorted(set(int(x) for x in s.pages)) if 1 <= p <= count and p not in taken]
+        if not pages:
+            continue
+        taken.update(pages)
+        conf = 1.0 if s.confidence is None else float(s.confidence)
+        dt = names.get(s.label or "") or plain.get(_plain(s.label or "")) if s.label else None
+        out.append({"doctype": dt if dt and conf >= min_conf else None, "pages": pages, "score": round(conf, 3)})
+    rest = [p for p in range(1, count + 1) if p not in taken]
+    for p in rest:
+        if out and out[-1]["doctype"] is None and out[-1]["pages"][-1] == p - 1 and out[-1].get("rest"):
+            out[-1]["pages"].append(p)
+        else:
+            out.append({"doctype": None, "pages": [p], "score": 0.0, "rest": True})
+    out.sort(key=lambda s: s["pages"][0])
+    for s in out:
+        s.pop("rest", None)
+    if not split and out:
+        best = max(out, key=lambda s: (s["doctype"] is not None, s["score"]))
+        return [{"doctype": best["doctype"], "pages": list(range(1, count + 1)), "score": best["score"]}]
+    return out
+
+
 def extract_pages(data: bytes, mime: str, pages: list[int]) -> tuple[bytes, str]:
     """Return a new file containing only `pages` (1-based) of the original."""
     if mime == "application/pdf":
@@ -1274,7 +1310,11 @@ class DocFlowService:
                 dt = None
         if dt is not None and fl.classify.checkType and fl.classify.mode == "single" and self._recogniser(opt) is not None:
             # 3.4.0: the recognise engine is asked whether it is this type (its description), or another document
-            got = self._recognise_pages([result.text or ""], [dt], doc_id, opt, result)
+            if self._splits(self._recogniser(opt)):
+                parts = self._service_parts(self._recogniser(opt), [dt], doc_id, opt, result, len(result.pages) or 1, False)
+                got = None if parts is None else [(parts[0]["doctype"], parts[0]["score"])]
+            else:
+                got = self._recognise_pages([result.text or ""], [dt], doc_id, opt, result)
             if got is not None and got[0][0] is None:
                 result.warnings.append(f"Does not look like {dt.name}: the recognise engine did not take it for one")
                 dt = None
@@ -1367,6 +1407,26 @@ class DocFlowService:
             return None
         return found[0] if found else None
 
+    @staticmethod
+    def _splits(prov) -> bool:
+        """The recognise engine is a service that splits the whole file (it sees the file, not each page's text)."""
+        return prov is not None and Capability.SPLIT in prov.info.capabilities
+
+    def _service_parts(self, prov, types: list[DocType], doc_id: str, opt: ProcessOptions, result: DocumentResult,
+                       count: int, split: bool) -> Optional[list[dict]]:
+        """The file's parts as a recognise-and-split service sees them (3.4.0), or None to use the words on the page
+        (the service failed: noted on the document). The service is sent the file itself."""
+        data, _name, mime = self.store.file_bytes(doc_id)
+        names = {dt.name: dt.id for dt in types}
+        try:
+            segments = prov.instance.split(data, mime, count, list(names), {dt.name: dt.description for dt in types},
+                                           segment=split)
+        except DocAutoError as e:
+            result.warnings.append(f"Recognised by the words on the page: {prov.info.id} failed ({e})")
+            return None
+        self.svc._meter(None, doc_id, opt, prov, Capability.CLASSIFY, count, "classify", result)
+        return parts_from_segments(segments, count, names, self.RECOGNISE_MIN, split)
+
     def _recognise_pages(self, texts: list[str], types: list[DocType], doc_id: str, opt: ProcessOptions,
                          result: DocumentResult) -> Optional[list[tuple[Optional[str], float]]]:
         """Each page's type as the recognise engine sees it, from every type's name and description (3.4.0), or
@@ -1402,8 +1462,12 @@ class DocFlowService:
     def _split(self, fl: Flow, doc_id: str, result: DocumentResult, opt: ProcessOptions) -> str:
         types = self.flow_doctypes(fl)
         texts = ["\n".join(l.text for l in p.lines) for p in result.pages]
-        segs = split_pages(texts, types, fl.classify.minScore, fl.classify.split,
-                           self._recognise_pages(texts, types, doc_id, opt, result))
+        prov = self._recogniser(opt)
+        segs = self._service_parts(prov, types, doc_id, opt, result, len(texts), fl.classify.split) \
+            if self._splits(prov) else None
+        if segs is None:
+            segs = split_pages(texts, types, fl.classify.minScore, fl.classify.split,
+                               None if self._splits(prov) else self._recognise_pages(texts, types, doc_id, opt, result))
         data, file_name, mime = self.store.file_bytes(doc_id)
         stem, by_id = Path(file_name).stem, {d.id: d for d in types}
         for i, s in enumerate(segs, 1):

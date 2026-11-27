@@ -25,6 +25,7 @@ class Capability(str, Enum):
     SELECTION_MARKS = "selection_marks"
     BARCODES = "barcodes"
     CLASSIFY = "classify"
+    SPLIT = "split"                      # 3.4.0: a cloud service recognises and splits a whole file at once
     EXTRACT_SCHEMA = "extract_schema"
     PREBUILT_MODELS = "prebuilt_models"
     SEARCHABLE_PDF = "searchable_pdf"
@@ -110,6 +111,26 @@ class BaseProvider:
 
     def dispose(self) -> None:
         pass
+
+
+@dataclass
+class Segment:
+    """One part of a file as a recognise-and-split service sees it: its type (the service's own name for it; None:
+    none of them), its pages (1-based) and the service's confidence (None: the service gives none)."""
+    label: Optional[str]
+    pages: list[int]
+    confidence: Optional[float] = None
+
+
+class SplitProvider(BaseProvider):
+    """A cloud service that recognises and splits a whole file (3.4.0): Azure Content Understanding, Google Document
+    AI splitters and classifiers, Amazon Bedrock Data Automation. It sees the file itself, not its text."""
+
+    def split(self, data: bytes, mime: str, page_count: int, labels: list[str],
+              descriptions: Optional[dict[str, str]] = None, segment: bool = True) -> list[Segment]:
+        """The file's parts. `labels` and `descriptions` are the process's types; `segment` False: the file is one
+        document (one part for all of it)."""
+        raise NotImplementedError  # pragma: no cover - interface
 
 
 class OcrProvider(BaseProvider):

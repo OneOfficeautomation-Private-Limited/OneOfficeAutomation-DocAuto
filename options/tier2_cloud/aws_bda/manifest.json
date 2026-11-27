@@ -1,0 +1,20 @@
+{
+  "id": "aws-bda",
+  "displayName": "Amazon Bedrock Data Automation",
+  "version": "1.0.0",
+  "vendor": "Amazon Web Services",
+  "tier": 2,
+  "kind": "classify",
+  "entrypoint": "AwsBdaProvider",
+  "capabilities": ["classify", "split"],
+  "languages": ["*"],
+  "runsLocally": false,
+  "regions": [],
+  "creditCostPerPage": {"classify": 5},
+  "supportedMimeTypes": ["application/pdf", "image/png", "image/jpeg", "image/tiff"],
+  "credentialTypes": ["aws_access_key", "aws_role"],
+  "license": "Commercial (BYOK)",
+  "requires": {"python": ["boto3"]},
+  "configSchema": {"region": "AWS region", "projectArn": "a Data Automation project with the splitter on and a blueprint per document type", "stage": "LIVE | DEVELOPMENT", "profileArn": "optional: AWS's profile for the region is used"},
+  "notes": "Blueprints are named as the process's document types; the file is sent inline (no S3)."
+}

@@ -40,6 +40,31 @@ providers:
         formProcessorId: ${DOCAI_FORM_PROCESSOR:-}
       credentials:
         serviceAccountFile: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    azure-content-understanding:
+      config:
+        endpoint: ${AZURE_CU_ENDPOINT:-}
+        completionModel: ${AZURE_CU_MODEL:-gpt-4.1}
+        processingLocation: ${AZURE_CU_PROCESSING_LOCATION:-geography}
+        region: ${AZURE_CU_REGION:-}
+      credentials:
+        apiKey: ${AZURE_CU_KEY:-}
+    google-docai-split:
+      config:
+        projectId: ${GCP_PROJECT:-}
+        location: ${DOCAI_LOCATION:-us}
+        processorId: ${DOCAI_SPLIT_PROCESSOR:-}
+        processorVersion: ${DOCAI_SPLIT_VERSION:-}
+      credentials:
+        serviceAccountFile: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    aws-bda:
+      config:
+        region: ${BDA_REGION:-}
+        projectArn: ${BDA_PROJECT_ARN:-}
+        stage: ${BDA_STAGE:-LIVE}
+        profileArn: ${BDA_PROFILE_ARN:-}
+      credentials:
+        accessKeyId: ${BDA_ACCESS_KEY_ID:-}
+        secretAccessKey: ${BDA_SECRET_ACCESS_KEY:-}
     abbyy:
       config:
         product: ${ABBYY_PRODUCT:-}       # vantage | fre | cloud  (template - see connector README)

@@ -49,8 +49,10 @@ DEFAULTS = [
      "default": "builtin-rules"},
     {"key": "DOCAUTO_DEFAULT_CLASSIFY", "label": "Recognise and split engine", "type": "engine", "kind": "extraction",
      "default": "", "allowEmpty": True,
-     "help": "The AI engine that recognises each page's document type from the types' descriptions (3.4.0). Empty: "
-             "the words on the page (on this server, offline)."},
+     "help": "The engine that recognises document types (3.4.0): an AI engine reads each page's text against the "
+             "types' descriptions; a cloud recognise-and-split service (Azure Content Understanding, Google Document "
+             "AI splitter, Amazon Bedrock Data Automation) is sent the whole file. Empty: the words on the page (on "
+             "this server, offline)."},
     {"key": "DOCAUTO_CLOUD_OPT_IN", "label": "Cloud opt-in", "type": "bool", "default": "false",
      "help": "Off = local-only: no engine that sends documents off this machine may run (OneConnect, cloud OneMind)."},
     {"key": "DOCAUTO_ESCALATE_THRESHOLD", "label": "Retry pages below this OCR confidence (0-1)", "type": "number",
@@ -141,6 +143,39 @@ ENGINES: dict[str, dict[str, Any]] = {
         {"key": "AWS_REGION", "label": "Region", "type": "text", "default": "", "placeholder": "me-central-1"},
         {"key": "AWS_ACCESS_KEY_ID", "label": "Access key id", "type": "text", "default": ""},
         {"key": "AWS_SECRET_ACCESS_KEY", "label": "Secret access key", "type": "secret", "default": ""}],
+        "install": "pip install boto3"},
+    # 3.4.0: cloud services that recognise and split a whole file
+    "azure-content-understanding": {"fields": [
+        {"key": "AZURE_CU_ENDPOINT", "label": "Endpoint", "type": "text", "default": "",
+         "placeholder": "https://<resource>.services.ai.azure.com"},
+        {"key": "AZURE_CU_KEY", "label": "Key", "type": "secret", "default": ""},
+        {"key": "AZURE_CU_MODEL", "label": "Completion model", "type": "text", "default": "gpt-4.1",
+         "suggestions": ["gpt-4.1", "gpt-4.1-mini", "gpt-5.2"], "allowEmpty": True,
+         "help": "A model deployed for Content Understanding in the resource. Empty: the resource's default."},
+        {"key": "AZURE_CU_PROCESSING_LOCATION", "label": "Where it may be processed", "type": "select",
+         "options": ["geography", "dataZone", "global"], "default": "geography",
+         "help": "geography: in the resource's geography only."},
+        {"key": "AZURE_CU_REGION", "label": "Region", "type": "text", "default": "", "allowEmpty": True,
+         "help": "The Azure region of the resource. Used by the residency policy."}], "install": None},
+    "google-docai-split": {"fields": [
+        {"key": "GCP_PROJECT", "label": "GCP project id", "type": "text", "default": ""},
+        {"key": "DOCAI_LOCATION", "label": "Location", "type": "text", "default": "us", "suggestions": ["us", "eu"]},
+        {"key": "DOCAI_SPLIT_PROCESSOR", "label": "Splitter or classifier processor id", "type": "text", "default": "",
+         "help": "A Custom Splitter or Custom Classifier processor; its kinds of document named as your document types."},
+        {"key": "DOCAI_SPLIT_VERSION", "label": "Processor version", "type": "text", "default": "", "allowEmpty": True,
+         "help": "Empty: the processor's default version."},
+        {"key": "GOOGLE_APPLICATION_CREDENTIALS", "label": "Service-account JSON path", "type": "path", "default": ""}],
+        "install": "pip install google-cloud-documentai"},
+    "aws-bda": {"fields": [
+        {"key": "BDA_REGION", "label": "Region", "type": "text", "default": "", "placeholder": "us-east-1"},
+        {"key": "BDA_PROJECT_ARN", "label": "Project ARN", "type": "text", "default": "",
+         "help": "A Data Automation project with the splitter on and one blueprint per document type, named as the type."},
+        {"key": "BDA_STAGE", "label": "Project stage", "type": "select", "options": ["LIVE", "DEVELOPMENT"], "default": "LIVE"},
+        {"key": "BDA_PROFILE_ARN", "label": "Profile ARN", "type": "text", "default": "", "allowEmpty": True,
+         "help": "Empty: AWS's own profile for the region."},
+        {"key": "BDA_ACCESS_KEY_ID", "label": "Access key id", "type": "text", "default": "", "allowEmpty": True,
+         "help": "Empty: the server's own AWS role or profile."},
+        {"key": "BDA_SECRET_ACCESS_KEY", "label": "Secret access key", "type": "secret", "default": ""}],
         "install": "pip install boto3"},
     "abbyy": {"fields": [
         {"key": "ABBYY_PRODUCT", "label": "ABBYY product", "type": "select", "options": ["", "vantage", "fre", "cloud"],

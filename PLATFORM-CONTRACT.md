@@ -109,6 +109,10 @@ forwards `admin/update` or `admin/installer.bat`.
   `description`; empty means the words on the page (as before). An engine that may not run (unknown, cloud opt-in off,
   missing key) or fails falls back to the words on the page, with a warning on the document. Each page asked is a
   `classify` step in `provenance` and in the usage meter.
+  The engine may also be a cloud recognise-and-split service (`capabilities` include `split`, kind `classify`, pack
+  `tier2_cloud`): `azure-content-understanding`, `google-docai-split`, `aws-bda`. It is sent the whole file and
+  answers its parts; a part's type is matched to the process's types by name. Metered as one `classify` step for
+  the file's pages.
 
 ### What the Command Center adds to a process before saving it
 
