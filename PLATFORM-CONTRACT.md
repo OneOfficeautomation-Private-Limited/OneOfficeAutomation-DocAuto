@@ -131,6 +131,8 @@ forwards `admin/update` or `admin/installer.bat`.
 - **A draft holds its deliveries** (3.4.1): while a process is a draft its documents are read, checked and reviewed,
   but its deliveries are not sent; each is logged as `Held: this process is a draft` (ok false). `deliveries/{id}/test`
   still sends on purpose.
+- **Why a document failed** (3.4.2): `GET df/flows/{id}/documents?fields=true` adds `error` ({code, message, ...}) to
+  each failed document, for the Inbox's Needs you list.
 
 ### What the Command Center adds to a process before saving it
 

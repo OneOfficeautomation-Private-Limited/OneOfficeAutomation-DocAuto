@@ -101,3 +101,18 @@ def test_a_draft_holds_its_deliveries(client):  # noqa: F811
     assert log and log[0]["detail"] == HELD and not log[0]["ok"]
     assert not [o for o in appmod.docflow().store.outbox_pending() if o.get("flow_id") == fl["id"]] \
         if hasattr(appmod.docflow().store, "outbox_pending") else True
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract not installed")
+def test_the_documents_list_says_why_a_document_failed(client, monkeypatch):  # noqa: F811
+    """3.4.2: GET df/flows/{id}/documents?fields=true gives a failed document's error, for the Inbox's Needs you list."""
+    import docauto.api.app as appmod
+    fl = client.post(f"{DF}/flows", json={"name": "Fails", "docTypes": ["invoice"]}).json()
+    d = up(client, fl["id"], pdf([INV]))
+    store = appmod.service().store
+    store.set_doc_status(d["documentId"], "failed")
+    monkeypatch.setattr(store, "last_job_error", lambda doc_id: {"code": "OCR.FAILED", "message": "The engine could not read the page"})
+    rows = client.get(f"{DF}/flows/{fl['id']}/documents?fields=true").json()
+    assert rows[0]["status"] == "failed" and rows[0]["error"]["message"] == "The engine could not read the page"
+    plain = client.get(f"{DF}/flows/{fl['id']}/documents").json()
+    assert "error" not in plain[0]

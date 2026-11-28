@@ -760,6 +760,8 @@ def df_flow_documents(flow_id: str, status: Optional[str] = None, limit: int = 2
             r["fields"] = {f.name: f.out() for f in res.fields} if res else {}
             r["confidence"] = res.confidence if res else None
             r["pages"] = len(res.pages) if res else None
+            if r["status"] == "failed":   # 3.4.2: why it failed, for the Inbox's "Needs you" list
+                r["error"] = store.last_job_error(r["id"])
             r["engines"] = list(dict.fromkeys(s.providerId for s in res.provenance.steps
                                               if s.stage == "digitize")) if res else []
     return rows
