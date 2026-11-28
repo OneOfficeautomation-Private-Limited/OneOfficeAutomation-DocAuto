@@ -65,3 +65,39 @@ def test_a_webhook_header_can_come_from_the_vault(monkeypatch):
     ok, detail, retry = df._send_delivery(dv, "doc1", "success", {})
     assert not ok and not retry and "X-Api-Key" in detail and not sent
     svc.close()
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract not installed")
+def test_a_dry_run_reads_as_the_process_and_keeps_nothing(client):  # noqa: F811
+    """3.4.1: Try in this process reads a document with the process's checks and review settings, says what would be
+    delivered, and forgets it: no document, no review, no delivery."""
+    import docauto.api.app as appmod
+    fl = client.post(f"{DF}/flows", json={"name": "Try me", "docTypes": ["invoice"], "status": "live",
+                                          "review": {"mode": "all"},
+                                          "deliveries": [{"type": "webhook", "name": "ERP", "on": ["success", "validation"],
+                                                          "params": {"url": "http://127.0.0.1:9/never"}}]}).json()
+    before = len(appmod.docflow().store.instance_documents(fl["id"], ["success", "validated", "validation", "invalid", "failed"]))
+    r = client.post(f"{DF}/flows/{fl['id']}/try", files={"file": ("inv.pdf", pdf([INV]), "application/pdf")})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["status"] == "validation" and out["doctypeName"] == "Invoice" and out["fields"]
+    assert out["reviewReasons"] and out["deliveries"] == ["ERP"]       # why it would go to a person, and what would be sent
+    after = appmod.docflow().store.instance_documents(fl["id"], ["success", "validated", "validation", "invalid", "failed"])
+    assert len(after) == before                                              # nothing kept
+    assert not appmod.docflow().store.delivery_list(fl["id"])               # nothing sent or queued
+    assert not [d for d in client.get(f"{DF}/review").json() if d.get("flowId") == fl["id"]]
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract not installed")
+def test_a_draft_holds_its_deliveries(client):  # noqa: F811
+    import docauto.api.app as appmod
+    from docauto.docflow import HELD
+    fl = client.post(f"{DF}/flows", json={"name": "Still a draft", "docTypes": ["invoice"],
+                                          "deliveries": [{"type": "webhook", "name": "ERP", "on": ["success", "validation"],
+                                                          "params": {"url": "http://127.0.0.1:9/never"}}]}).json()
+    assert fl["status"] == "draft"
+    up(client, fl["id"], pdf([INV]))
+    log = appmod.docflow().store.delivery_list(fl["id"])
+    assert log and log[0]["detail"] == HELD and not log[0]["ok"]
+    assert not [o for o in appmod.docflow().store.outbox_pending() if o.get("flow_id") == fl["id"]] \
+        if hasattr(appmod.docflow().store, "outbox_pending") else True

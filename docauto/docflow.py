@@ -773,6 +773,10 @@ def start_anchor(dt: DocType) -> Optional[str]:
     return req.label.split("/")[0].strip().lower()
 
 
+#: a dry run of a process (3.4.1): read, checked and forgotten (no events, deliveries, routing or messages)
+TRY_SOURCE = "try"
+#: what the delivery log says for a delivery a draft process holds back (3.4.1)
+HELD = "Held: this process is a draft"
 #: a delivery header value read from the Command Center's vault at delivery time (3.4.1): "vault:folder/credential/attribute"
 VAULT_PREFIX = "vault:"
 
@@ -1384,12 +1388,19 @@ class DocFlowService:
         reasons = review_mode(fl.review.mode, reasons)
         result.review.reasons = reasons
         new = status
+        trying = opt.source == TRY_SOURCE   # 3.4.1: a dry run tells nobody and sends nothing elsewhere
         for f in flags:
-            if f["action"] == "notify":
+            if f["action"] == "notify" and not trying:
                 self._notify(fl, doc_id, f)
         route = next((f for f in flags if f["action"] == "route" and f.get("routeTo")), None)
+        if route and trying:
+            result.warnings.append(f"Would be sent to process {route['routeTo']} because {route['rule']}: {route['message']}")
+            route = None
+            new = "invalid"
         if any(f["action"] == "reject" for f in flags):
             new = "invalid"
+        elif new == "invalid" and trying:
+            pass
         elif route:
             target = self._route(fl, doc_id, route)
             if not target:   # the process to send it to is gone: a person decides instead
@@ -1724,7 +1735,7 @@ class DocFlowService:
     # ---------------------------------------------------------------- events: learning + delivery
     def _on_event(self, event: str, doc_id: str, **info) -> None:
         row = self.store.doc_row(doc_id)
-        if not row or not row.get("instance_id"):
+        if not row or not row.get("instance_id") or row.get("source") == TRY_SOURCE:
             return
         status = info.get("status") or row["status"]
         if event == "validated" and status == "validated" and row.get("doctype_id"):
@@ -1763,6 +1774,9 @@ class DocFlowService:
         n = 0
         for dv in fl.deliveries:
             if not dv.enabled or status not in dv.on:
+                continue
+            if fl.status != "live":   # 3.4.1: a draft reads, checks and reviews, but sends nothing (Send a test still does)
+                self.store.delivery_log(fl.id, doc_id, dv.name or dv.type, dv.type, False, HELD)
                 continue
             body = self.payload(fl, doc_id, status)
             self.store.outbox_add("delivery", {"flowId": fl.id, "flowName": fl.name, "status": status,
@@ -2074,6 +2088,33 @@ class DocFlowService:
                    "processed_at": body["processedAt"], **scal}
             ws.append([row.get(h) for h in head])
             wb.save(path)
+
+    def try_document(self, flow_id: str, data: bytes, file_name: str) -> dict:
+        """A dry run of a process (3.4.1): the document is read as the process would read it (its engines, checks and
+        review settings) and then forgotten. Nothing is kept, sent to review, delivered, routed or told."""
+        from .preprocess import sniff_mime
+        if sniff_mime(data, file_name) not in READABLE_MIME:
+            raise InvalidInput(f"'{file_name}' is not a file Document Automation reads")
+        fl = self.flow(flow_id)
+        types = self.flow_doctypes(fl)
+        if not types:
+            raise InvalidInput("the process has no document type yet")
+        dt = self._einvoice_type(fl, types, data, file_name) or types[0]
+        note = None if len(types) == 1 or fl.classify.mode == "single" else \
+            f"Read as {dt.name}: a try reads one document as the process's first type"
+        ids = self.svc.submit(data, file_name, self._options(fl, dt, TRY_SOURCE), wait=True)
+        doc_id = ids["documentId"]
+        try:
+            d = self.document(doc_id)
+            res = self.store.get_result(doc_id)
+            status = d["status"]
+            would = [dv.name or dv.type for dv in fl.deliveries if dv.enabled and status in dv.on]
+            return {"status": status, "doctypeId": d.get("doctype_id"), "doctypeName": dt.name, "fields": d["fields"],
+                    "confidence": d["confidence"], "flags": d["flags"], "reviewReasons": d["reviewReasons"],
+                    "warnings": (res.warnings if res else []) + ([note] if note else []), "deliveries": would,
+                    "live": fl.status == "live", "error": d.get("error")}
+        finally:
+            self.store.delete_document(doc_id)
 
     def test_delivery(self, flow_id: str, delivery_id: str) -> list[dict]:
         fl = self.flow(flow_id)

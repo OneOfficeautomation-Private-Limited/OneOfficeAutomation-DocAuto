@@ -777,6 +777,12 @@ def df_delivery_log(flow_id: str, _: str = Depends(auth)):
     return service().store.delivery_list(flow_id if flow_id != "all" else None, 200)
 
 
+@app.post(f"{DF}/flows/{{flow_id}}/try")
+async def df_try_document(flow_id: str, file: UploadFile = File(...), _: str = Depends(auth)):
+    """A dry run of the process on one document (3.4.1): nothing is kept, reviewed or delivered."""
+    return docflow().try_document(flow_id, await file.read(), file.filename or "document")
+
+
 @app.post(f"{DF}/flows/{{flow_id}}/deliveries/{{delivery_id}}/test")
 def df_test_delivery(flow_id: str, delivery_id: str, _: str = Depends(auth)):
     return docflow().test_delivery(flow_id, delivery_id)

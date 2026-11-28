@@ -563,7 +563,7 @@ def test_email_and_cloud_storage_deliveries(monkeypatch):
     monkeypatch.setenv("DOCAUTO_API_TOKEN", "tok")
     svc = DocumentService(make_config())
     df = DocFlowService(svc)
-    fl = df.save_flow(Flow(name="Out", docTypes=["invoice"], deliveries=[
+    fl = df.save_flow(Flow(name="Out", docTypes=["invoice"], status="live", deliveries=[
         Delivery(type="email", name="Mail", on=["success", "validation"], params={"to": ["ap@example.com", "role:finance"], "requestedBy": "ann"}),
         Delivery(type="cloud_storage", name="Blob", on=["success", "validation"], params={
             "provider": "azure_blob", "container": base + "/acct/invoices", "prefix": "2026", "secretRef": "store/blob/sas",

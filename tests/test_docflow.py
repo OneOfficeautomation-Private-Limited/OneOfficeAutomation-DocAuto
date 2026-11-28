@@ -93,7 +93,7 @@ def test_flow_rules_lookups_and_deliveries(client, tmp_path, monkeypatch):
     import docauto.docflow as dfm
     monkeypatch.setattr(dfm.httpx, "post", lambda url, json=None, headers=None, timeout=None:
                         posted.append((url, json)) or type("R", (), {"status_code": 200})())
-    flow = {"name": "AP invoices", "docTypes": ["invoice"],
+    flow = {"name": "AP invoices", "docTypes": ["invoice"], "status": "live",   # a draft holds its deliveries (3.4.1)
             "rules": [{"type": "duplicate", "name": "Duplicate invoice", "params": {"fields": ["supplier_vat", "invoice_number"]}},
                       {"type": "lookup", "name": "Known supplier", "params": {"field": "supplier_vat", "table": "suppliers",
                                                                               "column": "vat", "enrich": {"supplier_name": "name"}}},

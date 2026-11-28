@@ -126,7 +126,7 @@ def test_delivery_failed_and_review_overdue(client, emitted, monkeypatch):
     monkeypatch.setattr(outbox, "BACKOFF", 0.01)          # retries with backoff, then delivery_failed
     monkeypatch.setattr(outbox, "MAX_ATTEMPTS", 3)        # not 10: 5 s of backoff made it miss the wait on slow runners
     fid = client.post(f"{DF}/flows", json={
-        "name": "Slow", "docTypes": ["invoice"], "review": {"fieldThresholds": {"total": 0.999}, "slaHours": 0},
+        "name": "Slow", "docTypes": ["invoice"], "status": "live", "review": {"fieldThresholds": {"total": 0.999}, "slaHours": 0},
         "deliveries": [{"type": "webhook", "name": "ERP", "on": ["validation"], "params": {"url": "http://erp.local/hook"}}]}).json()["id"]
     doc = up(client, fid)
     failed = wait_for(emitted, "delivery_failed")[0]
@@ -190,7 +190,7 @@ def test_deliveries_retry_with_backoff_and_are_logged_once(client, monkeypatch):
     codes, posted = [503, 500, 200], []
     monkeypatch.setattr(dfm.httpx, "post", lambda url, json=None, headers=None, timeout=None:
                         posted.append(json) or Resp(codes.pop(0) if codes else 200))
-    fid = client.post(f"{DF}/flows", json={"name": "ERP", "docTypes": ["invoice"], "review": AUTO, "deliveries": [
+    fid = client.post(f"{DF}/flows", json={"name": "ERP", "docTypes": ["invoice"], "status": "live", "review": AUTO, "deliveries": [
         {"type": "webhook", "name": "ERP", "params": {"url": "http://erp.local/hook"}}]}).json()["id"]
     doc = up(client, fid)
     end = time.time() + 10
@@ -209,7 +209,7 @@ def test_a_refused_delivery_fails_without_retrying(client, emitted, monkeypatch)
     import docauto.docflow as dfm
     posted = []
     monkeypatch.setattr(dfm.httpx, "post", lambda *a, **k: posted.append(1) or Resp(400))
-    fid = client.post(f"{DF}/flows", json={"name": "ERP", "docTypes": ["invoice"], "review": AUTO, "deliveries": [
+    fid = client.post(f"{DF}/flows", json={"name": "ERP", "docTypes": ["invoice"], "status": "live", "review": AUTO, "deliveries": [
         {"type": "webhook", "name": "ERP", "params": {"url": "http://erp.local/hook"}}]}).json()["id"]
     up(client, fid)
     assert wait_for(emitted, "delivery_failed")[0]["status"] == "success"

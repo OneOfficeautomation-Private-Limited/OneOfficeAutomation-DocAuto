@@ -124,6 +124,13 @@ forwards `admin/update` or `admin/installer.bat`.
   `docflow-callback/secret` (as the delivery's `requestedBy`) each time it is sent, and never kept; when it cannot be
   read the delivery fails and sends nothing. The Command Center checks the person may use that vault entry when the
   process is saved, and stamps `requestedBy`.
+- **Try in this process** (3.4.1): `POST df/flows/{id}/try` (multipart `file`) reads one document as the process would
+  (its type, engines, checks and review settings) and forgets it: no document is kept, nothing goes to review, and no
+  delivery, event, route or message is sent. Answers `{status, doctypeId, doctypeName, fields, confidence, flags,
+  reviewReasons, warnings, deliveries (the names that would send), live, error}`.
+- **A draft holds its deliveries** (3.4.1): while a process is a draft its documents are read, checked and reviewed,
+  but its deliveries are not sent; each is logged as `Held: this process is a draft` (ok false). `deliveries/{id}/test`
+  still sends on purpose.
 
 ### What the Command Center adds to a process before saving it
 
