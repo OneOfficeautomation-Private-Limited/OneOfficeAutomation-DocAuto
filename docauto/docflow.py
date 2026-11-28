@@ -773,6 +773,9 @@ def start_anchor(dt: DocType) -> Optional[str]:
     return req.label.split("/")[0].strip().lower()
 
 
+#: a delivery header value read from the Command Center's vault at delivery time (3.4.1): "vault:folder/credential/attribute"
+VAULT_PREFIX = "vault:"
+
 #: the reasons that are only about how sure an engine was (left out when a process reviews nothing for confidence)
 CONFIDENCE_ONLY = ("low_confidence", "document_confidence")
 EVERY_DOCUMENT = ReviewReason(reason="review_all", message="Every document is reviewed in this process")
@@ -1886,7 +1889,17 @@ class DocFlowService:
                     headers["Authorization"] = dv.params["authHeader"]
                 extra = dv.params.get("headers") or {}
                 if isinstance(extra, dict):   # own headers of a web address delivery (an API key header, a tenant id...)
-                    headers.update({str(k): str(v) for k, v in extra.items() if str(k).strip()})
+                    for k, v in extra.items():
+                        if not str(k).strip():
+                            continue
+                        v = str(v)
+                        if v.startswith(VAULT_PREFIX):   # 3.4.1: a secret header value is a vault entry, read now, never kept
+                            try:
+                                v = str(self._platform("secret", {"requestedBy": dv.params.get("requestedBy", ""),
+                                                                  "ref": v[len(VAULT_PREFIX):].strip()}).get("value") or "")
+                            except Exception as e:   # not set up, refused or not reached: the receiver gets nothing
+                                return False, f"header {k}: its vault entry could not be read ({e})", False
+                        headers[str(k)] = v
                 method = str(dv.params.get("method") or "POST").upper()
                 if method not in ("POST", "PUT", "PATCH"):
                     method = "POST"

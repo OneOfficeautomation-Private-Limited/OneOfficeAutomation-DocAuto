@@ -120,6 +120,10 @@ forwards `admin/update` or `admin/installer.bat`.
   confidence alone: `low_confidence` and `document_confidence` reasons are left out; failed checks and missing or
   invalid values still go). A DocFlow before 3.4.1 has no `review.mode`: the Command Center offers the choice only
   when it is there.
+- **Secret webhook headers** (3.4.1): a webhook delivery's header value `vault:folder/credential/attribute` is read with
+  `docflow-callback/secret` (as the delivery's `requestedBy`) each time it is sent, and never kept; when it cannot be
+  read the delivery fails and sends nothing. The Command Center checks the person may use that vault entry when the
+  process is saved, and stamps `requestedBy`.
 
 ### What the Command Center adds to a process before saving it
 
