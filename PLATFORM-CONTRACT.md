@@ -115,6 +115,11 @@ forwards `admin/update` or `admin/installer.bat`.
   `tier2_cloud`): `azure-content-understanding`, `google-docai-split`, `aws-bda`. It is sent the whole file and
   answers its parts; a part's type is matched to the process's types by name. Metered as one `classify` step for
   the file's pages.
+- **How much goes to review** (3.4.1): a process's `review.mode` is `unsure` (the default: values under the confidence
+  thresholds, as before), `all` (every document; a reason `review_all` when there is no other) or `none` (nothing for
+  confidence alone: `low_confidence` and `document_confidence` reasons are left out; failed checks and missing or
+  invalid values still go). A DocFlow before 3.4.1 has no `review.mode`: the Command Center offers the choice only
+  when it is there.
 
 ### What the Command Center adds to a process before saving it
 

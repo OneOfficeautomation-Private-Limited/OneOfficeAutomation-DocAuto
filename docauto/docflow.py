@@ -244,6 +244,10 @@ class ClassifySettings(BaseModel):
 
 
 class ReviewSettings(BaseModel):
+    # 3.4.1: how much goes to a person. unsure: values under the confidence thresholds (as before); all: every
+    # document, for a new process's first weeks; none: nothing for confidence alone (failed checks and missing or
+    # invalid values still go)
+    mode: Literal["unsure", "all", "none"] = "unsure"
     fieldConfidence: float = 0.85
     documentConfidence: float = 0.80
     fieldThresholds: dict[str, float] = Field(default_factory=dict)   # {field name: 0-1}, over fieldConfidence
@@ -767,6 +771,21 @@ def start_anchor(dt: DocType) -> Optional[str]:
     if not req or not req.label:
         return None
     return req.label.split("/")[0].strip().lower()
+
+
+#: the reasons that are only about how sure an engine was (left out when a process reviews nothing for confidence)
+CONFIDENCE_ONLY = ("low_confidence", "document_confidence")
+EVERY_DOCUMENT = ReviewReason(reason="review_all", message="Every document is reviewed in this process")
+
+
+def review_mode(mode: str, reasons: list) -> list:
+    """The reasons for review as the process's review mode has them (3.4.1): all adds one when there is none;
+    none drops the confidence-only ones."""
+    if mode == "none":
+        return [r for r in reasons if r.reason not in CONFIDENCE_ONLY]
+    if mode == "all" and not reasons:
+        return [EVERY_DOCUMENT]
+    return reasons
 
 
 def split_pages(pages_text: list[str], doctypes: list[DocType], min_score: float, split: bool,
@@ -1359,6 +1378,7 @@ class DocFlowService:
         ft, dtt = self.svc._thresholds(opt)
         reasons = _merge_reasons(_flag_reasons(flags), review_reasons(result, opt.schema_ or dt.schema(), ft, dtt,
                                                                       opt.fieldThresholds))
+        reasons = review_mode(fl.review.mode, reasons)
         result.review.reasons = reasons
         new = status
         for f in flags:
@@ -1561,8 +1581,8 @@ class DocFlowService:
         if dt is None:
             return _merge_reasons([UNCLASSIFIED], _flag_reasons(flags))
         rv = fl.review if fl else ReviewSettings()
-        return _merge_reasons(_flag_reasons(flags), review_reasons(res, dt.schema(), rv.fieldConfidence,
-                                                                   rv.documentConfidence, rv.fieldThresholds))
+        return review_mode(rv.mode, _merge_reasons(_flag_reasons(flags), review_reasons(res, dt.schema(), rv.fieldConfidence,
+                                                                                     rv.documentConfidence, rv.fieldThresholds)))
 
     def _example_text(self, dt: DocType) -> str:
         """The teaching examples as AI reading sees them: each approved document's right values (no page text)."""
