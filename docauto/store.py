@@ -343,7 +343,7 @@ class Store:
         return json.loads(job["error"]) if job and job["error"] else None
 
     def instance_documents(self, instance_id: Optional[str], statuses: Optional[list[str]] = None,
-                           limit: int = 200, offset: int = 0) -> list[dict]:
+                           limit: int = 200, offset: int = 0, only: Optional[list[str]] = None) -> list[dict]:
         q = ("SELECT id,file_name,created_at,updated_at,status,instance_id,instance_version,source,processing_ms,"
              "validated_by,field_count,corrected_count,doctype_id,parent_id,flags FROM documents "
              "WHERE instance_id IS NOT NULL")
@@ -351,6 +351,10 @@ class Store:
         if instance_id:
             q += " AND instance_id=?"
             args.append(instance_id)
+        elif only is not None:   # 3.4.3: only the documents of these processes
+            ids = list(only) or [""]
+            q += f" AND instance_id IN ({','.join('?' * len(ids))})"
+            args += ids
         if statuses:
             q += f" AND status IN ({','.join('?' * len(statuses))})"
             args += statuses
@@ -371,12 +375,17 @@ class Store:
         r = self._one(q + " ORDER BY created_at LIMIT 1", tuple(args))
         return r["id"] if r else None
 
-    def instance_stats(self, instance_id: Optional[str], days: int = 14) -> dict:
-        """Counts by status, and per day for the last `days` days with documents (14 by default, 1 to 366)."""
+    def instance_stats(self, instance_id: Optional[str], days: int = 14, only: Optional[list[str]] = None) -> dict:
+        """Counts by status, and per day for the last `days` days with documents (14 by default, 1 to 366). only: with
+        no instance_id, count the documents of these processes alone (3.4.3: not those of deleted processes)."""
         days = max(1, min(366, int(days or 14)))
         # a batch (split) and a copy whose type was changed (replaced, 3.4.3) are not documents of their own
         where, args = (("WHERE instance_id=? AND COALESCE(status,'') NOT IN ('split','replaced')", (instance_id,)) if instance_id
                        else ("WHERE instance_id IS NOT NULL AND COALESCE(status,'') NOT IN ('split','replaced')", ()))
+        if not instance_id and only is not None:
+            ids = list(only) or [""]
+            where += f" AND instance_id IN ({','.join('?' * len(ids))})"
+            args = (*args, *ids)
         by = {r["status"]: r["n"] for r in self._all(f"SELECT status, COUNT(*) n FROM documents {where} GROUP BY status", args)}
         agg = self._one(f"SELECT AVG(processing_ms) ms, SUM(COALESCE(field_count,0)) f, "
                         f"SUM(COALESCE(corrected_count,0)) c FROM documents {where} AND status IN ('success','validated')",

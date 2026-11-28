@@ -153,6 +153,7 @@ forwards `admin/update` or `admin/installer.bat`.
 - **Lookup with a condition** (3.4.3): a lookup rule may add `whereColumn` and `whereValue`: a row found whose column
   has another value is flagged ("... is in <table>, but its Status is 'blocked', not 'active'"). Saving refuses a
   column the table does not have.
+- **Deleted processes leave the Overview** (3.4.3): `df/overview` totals and recent documents count only existing processes; a deleted process's documents are kept (readable by id).
 - **Can DocFlow call back?** (3.4.3): `GET admin/version` adds `platformCallback` (true when `DOCAUTO_PLATFORM_URL` is
   set), so the Command Center can warn that agents, triggers, e-mail and engine keys cannot reach it.
 

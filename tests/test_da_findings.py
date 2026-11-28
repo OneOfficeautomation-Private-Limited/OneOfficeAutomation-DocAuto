@@ -86,3 +86,15 @@ def test_the_version_says_whether_docflow_can_call_back(client, monkeypatch):  #
     assert client.get("/api/docs/v1/admin/version").json()["platformCallback"] is False
     monkeypatch.setenv("DOCAUTO_PLATFORM_URL", "http://127.0.0.1:8720")
     assert client.get("/api/docs/v1/admin/version").json()["platformCallback"] is True
+
+
+def test_a_deleted_processs_documents_leave_the_overview(client):  # noqa: F811
+    fl = client.post(f"{DF}/flows", json={"name": "Short-lived", "docTypes": ["invoice"]}).json()
+    d = up(client, fl["id"], pdf([INV]))
+    before = client.get(f"{DF}/overview").json()
+    assert d["documentId"] in [r["id"] for r in before["recent"]]
+    client.delete(f"{DF}/flows/{fl['id']}")
+    after = client.get(f"{DF}/overview").json()
+    assert after["totals"]["total"] == before["totals"]["total"] - 1
+    assert d["documentId"] not in [r["id"] for r in after["recent"]]
+    assert client.get(f"{DF}/documents/{d['documentId']}").status_code == 200   # still kept

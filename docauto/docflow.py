@@ -2283,10 +2283,12 @@ class DocFlowService:
         q = self.review_queue(None)
         month = datetime.now(timezone.utc).strftime("%Y-%m-01")
         used = self.store.month_usage(month)
-        return {"totals": self.store.instance_stats(None, days), "flows": per, "review": len(q),
+        # 3.4.3: a deleted process's documents are kept, but no longer counted or shown here
+        live = [f.id for f in flows] + [json.loads(b).get("id", "") for b in self.store.list_instance_bodies()]
+        return {"totals": self.store.instance_stats(None, days, only=live), "flows": per, "review": len(q),
                 "pagesThisMonth": used["p"], "creditsThisMonth": used["cr"],
                 "overdue": sum(1 for x in q if x["overdue"]), "doctypes": len(self.doctypes()),
-                "recent": self.store.instance_documents(None, None, limit=12),
+                "recent": self.store.instance_documents(None, None, limit=12, only=live),
                 "deliveryFailures": sum(1 for d in self.store.delivery_list(None, 200) if not d["ok"])}
 
     # ---------------------------------------------------------------- folders + SLA watcher
