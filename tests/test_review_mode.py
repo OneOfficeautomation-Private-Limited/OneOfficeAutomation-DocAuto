@@ -127,3 +127,13 @@ def test_a_table_upload_can_be_previewed_without_saving(client):  # noqa: F811
     out = r.json()
     assert out["columns"] == ["Supplier", "VAT number", "Country"] and out["rowCount"] == 2 and out["rows"][0]["Supplier"] == "ACME"
     assert client.get(f"{DF}/reftables").json() == before
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract not installed")
+def test_the_test_lab_can_compare_who_reads_the_fields(client):  # noqa: F811
+    """3.4.2: compare=fields runs the field-reading engines on the same document; readBy names the field engine."""
+    r = client.post(f"{DF}/test", files={"file": ("inv.pdf", pdf([INV]), "application/pdf")},
+                    data={"docType": "invoice", "engines": "builtin-rules", "compare": "fields"})
+    assert r.status_code == 200, r.text
+    run = r.json()["runs"][0]
+    assert run["engine"] == "builtin-rules" and "builtin-rules" in run["readBy"] and run["fields"]

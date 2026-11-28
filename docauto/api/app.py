@@ -876,9 +876,12 @@ def df_review_next(flow: Optional[str] = None, after: Optional[str] = None, _: s
 
 
 @app.post(f"{DF}/test")
-async def df_test(file: UploadFile = File(...), docType: str = Form(...), engines: str = Form("auto"), _: str = Depends(auth)):
-    """Test lab: the document read as docType by one or two engines (comma separated), side by side. Nothing is kept."""
-    return docflow().test_engines(await file.read(), file.filename or "document", docType, [e.strip() for e in engines.split(",")])
+async def df_test(file: UploadFile = File(...), docType: str = Form(...), engines: str = Form("auto"),
+                  compare: str = Form("pages"), _: str = Depends(auth)):
+    """Test lab: the document read as docType by one or two engines (comma separated), side by side. compare: pages
+    (page-reading engines) or fields (3.4.2: field-reading engines). Nothing is kept."""
+    return docflow().test_engines(await file.read(), file.filename or "document", docType, [e.strip() for e in engines.split(",")],
+                                  "fields" if compare == "fields" else "pages")
 
 
 @app.get(f"{DF}/overview")

@@ -135,6 +135,9 @@ forwards `admin/update` or `admin/installer.bat`.
   each failed document, for the Inbox's Needs you list.
 - **Preview a table upload** (3.4.2): `POST df/reftables/preview` (multipart `file`, `headerRow`) answers `{columns,
   rowCount, rows (the first 5)}` and saves nothing, so the upload dialog shows what the file gives.
+- **Compare who reads the fields** (3.4.2): `POST df/test` takes `compare` = `pages` (the default: the engines read the
+  page) or `fields` (the engines read the fields from the same reading of the page); `readBy` then names the field
+  engine.
 
 ### What the Command Center adds to a process before saving it
 

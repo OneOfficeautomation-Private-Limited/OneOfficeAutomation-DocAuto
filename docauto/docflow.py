@@ -2124,14 +2124,16 @@ class DocFlowService:
         return self._deliver(fl, docs[0]["id"], docs[0]["status"], only=delivery_id)
 
     # ---------------------------------------------------------------- teach from samples
-    def test_engines(self, data: bytes, file_name: str, dt_id: str, engines: list[str]) -> dict:
+    def test_engines(self, data: bytes, file_name: str, dt_id: str, engines: list[str], compare: str = "pages") -> dict:
         """Test lab: reads one document as a document type with each engine (no fallback to others), and forgets it
-        again: nothing is filed in a process, sent to review or delivered."""
+        again: nothing is filed in a process, sent to review or delivered. compare: "pages" (the engines read the
+        page) or "fields" (3.4.2: the engines read the fields, from the same reading of the page)."""
+        fields_compared = compare == "fields"
         dt = self.doctype(dt_id)
         runs = []
         for eng in (engines or ["auto"])[:2]:
-            opt = ProcessOptions(ocrProvider=eng or "auto", languages=dt.languages or ["en"], strictProvider=eng not in ("", "auto"),
-                                 schema=dt.schema())
+            opt = ProcessOptions(**({"extractionProvider": eng or "auto"} if fields_compared else {"ocrProvider": eng or "auto"}),
+                                 languages=dt.languages or ["en"], strictProvider=eng not in ("", "auto"), schema=dt.schema())
             t0 = time.time()
             try:
                 res = self.svc.process_bytes(data, file_name, opt)
@@ -2141,7 +2143,8 @@ class DocFlowService:
             try:
                 runs.append({"engine": eng, "ms": int((time.time() - t0) * 1000), "confidence": res.mean_line_confidence(),
                              "review": res.review.required,
-                             "readBy": list(dict.fromkeys(s.providerId for s in res.provenance.steps if s.stage == "digitize")),
+                             "readBy": list(dict.fromkeys(s.providerId for s in res.provenance.steps
+                                                          if s.stage == ("extract" if fields_compared else "digitize"))),
                              "fields": {f.name: {"value": f.value, "confidence": f.confidence, "passed": f.validation.passed,
                                                  "errors": f.validation.errors} for f in res.fields}})
             finally:
