@@ -116,3 +116,14 @@ def test_the_documents_list_says_why_a_document_failed(client, monkeypatch):  # 
     assert rows[0]["status"] == "failed" and rows[0]["error"]["message"] == "The engine could not read the page"
     plain = client.get(f"{DF}/flows/{fl['id']}/documents").json()
     assert "error" not in plain[0]
+
+
+def test_a_table_upload_can_be_previewed_without_saving(client):  # noqa: F811
+    """3.4.2: POST df/reftables/preview gives the columns, row count and first rows of a file, and saves nothing."""
+    data = "Supplier,VAT number,Country\nACME,300000000000003,SA\nGulf Office,310000000000003,AE\n".encode()
+    before = client.get(f"{DF}/reftables").json()
+    r = client.post(f"{DF}/reftables/preview", files={"file": ("suppliers.csv", data, "text/csv")}, data={"headerRow": "1"})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["columns"] == ["Supplier", "VAT number", "Country"] and out["rowCount"] == 2 and out["rows"][0]["Supplier"] == "ACME"
+    assert client.get(f"{DF}/reftables").json() == before

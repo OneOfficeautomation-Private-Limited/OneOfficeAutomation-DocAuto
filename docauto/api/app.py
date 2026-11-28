@@ -909,6 +909,13 @@ def ref_table_id(title: str, existing: list[dict], wanted: str = "") -> str:
     return rid
 
 
+@app.post(f"{DF}/reftables/preview")
+async def df_ref_preview(file: UploadFile = File(...), headerRow: int = Form(1), _: str = Depends(auth)):
+    """3.4.2: what an upload would give (its columns, row count and first rows), saving nothing."""
+    cols, rows = parse_table_file(await file.read(), file.filename or "table.csv", headerRow)
+    return {"columns": cols, "rowCount": len(rows), "rows": rows[:5]}
+
+
 @app.post(f"{DF}/reftables")
 async def df_ref_upload(file: UploadFile = File(...), name: str = Form(""), id: str = Form(""),
                         headerRow: int = Form(1), _: str = Depends(auth)):

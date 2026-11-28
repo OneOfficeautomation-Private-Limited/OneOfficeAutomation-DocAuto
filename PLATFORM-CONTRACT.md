@@ -133,6 +133,8 @@ forwards `admin/update` or `admin/installer.bat`.
   still sends on purpose.
 - **Why a document failed** (3.4.2): `GET df/flows/{id}/documents?fields=true` adds `error` ({code, message, ...}) to
   each failed document, for the Inbox's Needs you list.
+- **Preview a table upload** (3.4.2): `POST df/reftables/preview` (multipart `file`, `headerRow`) answers `{columns,
+  rowCount, rows (the first 5)}` and saves nothing, so the upload dialog shows what the file gives.
 
 ### What the Command Center adds to a process before saving it
 
