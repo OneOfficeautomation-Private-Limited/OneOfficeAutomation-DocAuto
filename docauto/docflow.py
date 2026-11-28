@@ -35,7 +35,7 @@ from typing import Any, Literal, Optional
 import httpx
 from pydantic import BaseModel, Field
 
-from . import einvoice, events, folders, outbox, pii
+from . import einvoice, events, folders, outbox, pii, scoring
 from .provider import Capability
 from .errors import DocAutoError, InvalidInput, PolicyDenied
 from .extraction import coerce, safe_eval
@@ -146,6 +146,23 @@ def tax_problems(p: dict, vals: dict) -> list[tuple[str, str]]:
         if abs(s + t - total) > max(tol_abs, abs(total) * tol_pct):
             out.append((tot, "Total does not equal subtotal + tax"))
     return out
+
+
+def reply_reason(r) -> str:
+    """3.4.3: why a receiver refused a delivery, from its reply (an error message, or the start of its text)."""
+    try:
+        b = r.json()
+        e = b.get("error") if isinstance(b, dict) else None
+        msg = (e.get("message") if isinstance(e, dict) else e) or (b.get("message") or b.get("detail") if isinstance(b, dict) else None)
+        fix = e.get("suggestedFix") if isinstance(e, dict) else None
+        text = " ".join(str(x).strip() for x in (msg, fix) if x)
+    except Exception:
+        try:
+            text = str(getattr(r, "text", "") or "").strip()
+        except Exception:
+            text = ""
+    text = re.sub(r"\s+", " ", text)[:300]
+    return f": {text}" if text else ""
 
 
 def date_problem(v, p: dict) -> Optional[str]:
@@ -352,6 +369,9 @@ def _cur(name="currency"):
 INVOICE_TOTAL_CHECK = ("abs(value_or(subtotal, total - value_or(vat_amount, 0)) - value_or(discount, 0) + value_or(other_charges, 0)"
                        " + value_or(vat_amount, 0) - total) <= max(0.05, abs(total) * 0.001)")
 OLD_INVOICE_CHECK = "abs(subtotal + vat_amount - total) < 0.05"
+scoring.CHECK_NAMES[INVOICE_TOTAL_CHECK] = "Amounts add up (subtotal - discount + charges + tax = total)"
+scoring.CHECK_NAMES[OLD_INVOICE_CHECK] = "Amounts add up (subtotal + tax = total)"
+scoring.CHECK_NAMES["abs(value_or(subtotal, total - value_or(vat_amount, 0)) + value_or(vat_amount, 0) - total) <= max(0.05, abs(total) * 0.001)"] =     "Amounts add up (subtotal + tax = total)"
 
 LIBRARY: dict[str, dict[str, Any]] = {
     "invoice": {"name": "Invoice", "description": "Bills from suppliers asking for payment: tax invoices, commercial invoices.",
@@ -546,8 +566,12 @@ def run_rules(store, flow: Flow, doctype: Optional[DocType], doc_id: str, result
                 v = vals.get(field)
                 if field and table and col and v not in (None, ""):
                     row = refs.find(table, col, v)
+                    wc, wv = str(p.get("whereColumn") or "").strip(), str(p.get("whereValue") or "").strip()
                     if row is None:
                         flag(r, p.get("message") or f"{field} '{v}' not found in {refs.name(table)}", field)
+                    elif wc and str(row.get(wc, "")).strip().lower() != wv.lower():
+                        # 3.4.3: the row must also have this value in a column (e.g. Status = active)
+                        flag(r, f"{field} '{v}' is in {refs.name(table)}, but its {wc} is '{row.get(wc, '')}', not '{wv}'", field)
                     else:
                         for target, src in (p.get("enrich") or {}).items():
                             if src in row and row[src] not in (None, ""):
@@ -1192,6 +1216,8 @@ class DocFlowService:
                 raise InvalidInput(f"field threshold for '{name}' must be between 0 and 1")
         for i, r in enumerate(fl.rules):
             r.id = r.id or f"r{i + 1}"
+            if r.type == "lookup" and r.params.get("table") and r.params.get("whereColumn") and self.store.ref_get(r.params["table"])                     and r.params["whereColumn"] not in (self.store.ref_get(r.params["table"]).get("columns") or []):
+                raise InvalidInput(f"rule '{r.name or r.type}': reference table has no column '{r.params['whereColumn']}'")
             if r.type == "lookup" and r.params.get("table") and not self.store.ref_get(r.params["table"]):
                 raise InvalidInput(f"rule '{r.name or r.type}': reference table '{r.params['table']}' not found")
         for i, d in enumerate(fl.deliveries):
@@ -1298,6 +1324,12 @@ class DocFlowService:
         else:
             opt = self._options(fl, None, source, role="batch", waitChildren=wait)
             ids = self.svc.submit(data, file_name, opt, wait=wait)
+            if wait:
+                # 3.4.3: a file that is one document of one type is answered with that document, not the batch
+                kids = self.store.children(ids["documentId"])
+                if len(kids) == 1:
+                    batch = ids["documentId"]
+                    return {**ids, **self.document(kids[0]["id"], brief=True), "documentId": kids[0]["id"], "batchId": batch}
         return {**ids, **self.document(ids["documentId"], brief=True)}
 
     @staticmethod
@@ -1350,11 +1382,17 @@ class DocFlowService:
             if not any(re.search(r"(?<![\w])" + re.escape(k.lower().strip()) + r"(?![\w])", low) for k in dt.keywords if k.strip()):
                 result.warnings.append(f"Does not look like {dt.name}: none of its recognition words is on it")
                 dt = None
+        if dt is None and opt.doctypeId:
+            # 3.4.3: it is not the type it was read as, so that type's checks and missing values are no reasons
+            # (its values stay, for a person who decides it is that type after all)
+            result.review.reasons = []
+            result.warnings = [w for w in result.warnings if not w.startswith(("validation rule failed", "field '", "document confidence"))]
         if dt is None and fl.classify.whenNoType == "reject":
             result.review.required, result.review.status = False, ReviewStatus.not_required
+            result.review.reasons = []
             result.warnings.append("Not one of this process's document types: rejected")
             self.store.save_result(result)
-            self.store.set_doc_fields(doc_id, flags=json.dumps([{"rule": "classification", "type": "classify",
+            self.store.set_doc_fields(doc_id, doctype_id=None, flags=json.dumps([{"rule": "classification", "type": "classify",
                                                                  "action": "reject", "message": "Document type not recognised"}]))
             return "invalid"
         if dt is None and fl.classify.whenNoType == "other":
@@ -1376,7 +1414,7 @@ class DocFlowService:
             result.warnings.append("Unclassified: choose the document type in One Desk")
             result.review.reasons = _merge_reasons(result.review.reasons, [UNCLASSIFIED])
             self.store.save_result(result)
-            self.store.set_doc_fields(doc_id, flags=json.dumps([{"rule": "classification", "type": "classify",
+            self.store.set_doc_fields(doc_id, doctype_id=None, flags=json.dumps([{"rule": "classification", "type": "classify",
                                                                  "action": "review", "message": "Document type not recognised"}]))
             return "validation"
         flags = run_rules(self.store, fl, dt, doc_id, result, RefData(self.store))
@@ -1578,6 +1616,8 @@ class DocFlowService:
         row["einvoice"] = res.einvoice if res else None       # e-invoice XML / QR data and its checks
         row["reviewReasons"] = [r.model_dump() for r in self._review_reasons(res, row)] if res else []
         row["children"] = self.store.children(doc_id) if row["status"] == "split" else []
+        if len(row["children"]) == 1:   # 3.4.3: the batch is one document: its results are that part's
+            row["onlyPart"] = row["children"][0]["id"]
         row["error"] = self.store.last_job_error(doc_id)
         return row
 
@@ -1712,9 +1752,13 @@ class DocFlowService:
             raise InvalidInput(f"unknown document '{doc_id}'")
         dt, fl = self.doctype(dt_id), self.flow(row["instance_id"])
         data, file_name, _ = self.store.file_bytes(doc_id)
-        self.store.set_doc_status(doc_id, "invalid", validated_by="reclassified")
+        # 3.4.3: the old copy is "replaced" (not rejected): counts, lists and batches leave it out, and it names the new one
+        self.store.set_doc_status(doc_id, "replaced", validated_by="reclassified")
         opt = self._options(fl, dt, row.get("source") or "upload", parentId=row.get("parent_id"), reuseFrom=doc_id)
         ids = self.svc.submit(data, file_name, opt, wait=True)
+        self.store.set_doc_fields(doc_id, flags=json.dumps([{"rule": "reclassified", "type": "replaced", "action": "replaced",
+                                                             "replacedBy": ids["documentId"],
+                                                             "message": f"Type changed to {dt.name}: see the new document"}]))
         return self.document(ids["documentId"])
 
     def review_queue(self, flow_id: Optional[str]) -> list[dict]:
@@ -1924,7 +1968,7 @@ class DocFlowService:
                     return False, f"{type(e).__name__}: {e}", True
                 ok = r.status_code < 300
                 # 4xx other than timeout / too many requests: the receiver refused it, a retry will not help
-                return ok, f"HTTP {r.status_code}", not ok and not (400 <= r.status_code < 500
+                return ok, f"HTTP {r.status_code}" + ("" if ok else reply_reason(r)), not ok and not (400 <= r.status_code < 500
                                                                      and r.status_code not in (408, 429))
             if dv.type in ("folder", "excel") and not folders.allowed(str(dv.params.get("path", "")), self.tenant):
                 return False, (f"'{dv.params.get('path')}' is not one of the folders processes may use: choose a folder "

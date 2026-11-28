@@ -397,8 +397,9 @@ def costs(pages: int = 10000, cloudShare: float = 0.2, extractShare: float = 0.3
 
 @app.get(f"{API}/admin/version")
 def get_version():
-    from .. import updates
-    return updates.version_info()
+    from .. import events, updates
+    # 3.4.3: whether DocFlow knows where the Command Center is (agents, triggers, e-mail and engine keys need it)
+    return {**updates.version_info(), "platformCallback": bool(events.platform_base("default"))}
 
 
 @app.post(f"{API}/admin/update")

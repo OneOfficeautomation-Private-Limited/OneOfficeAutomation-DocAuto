@@ -316,7 +316,7 @@ class Store:
 
     def children(self, parent_id: str) -> list[dict]:
         return [dict(r) for r in self._all("SELECT id,file_name,status,doctype_id FROM documents WHERE parent_id=? "
-                                           "ORDER BY created_at", (parent_id,))]
+                                           "AND COALESCE(status,'')<>'replaced' ORDER BY created_at", (parent_id,))]
 
     def overdue_reviews(self, flow_id: str, older_than_iso: str) -> list[dict]:
         return [dict(r) for r in self._all(
@@ -354,6 +354,8 @@ class Store:
         if statuses:
             q += f" AND status IN ({','.join('?' * len(statuses))})"
             args += statuses
+        else:   # 3.4.3: a copy whose type was changed is listed only when asked for (status=replaced)
+            q += " AND COALESCE(status,'')<>'replaced'"
         q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         return [dict(r) for r in self._all(q, tuple(args + [limit, offset]))]
 
@@ -372,8 +374,9 @@ class Store:
     def instance_stats(self, instance_id: Optional[str], days: int = 14) -> dict:
         """Counts by status, and per day for the last `days` days with documents (14 by default, 1 to 366)."""
         days = max(1, min(366, int(days or 14)))
-        where, args = (("WHERE instance_id=? AND COALESCE(status,'')<>'split'", (instance_id,)) if instance_id
-                       else ("WHERE instance_id IS NOT NULL AND COALESCE(status,'')<>'split'", ()))
+        # a batch (split) and a copy whose type was changed (replaced, 3.4.3) are not documents of their own
+        where, args = (("WHERE instance_id=? AND COALESCE(status,'') NOT IN ('split','replaced')", (instance_id,)) if instance_id
+                       else ("WHERE instance_id IS NOT NULL AND COALESCE(status,'') NOT IN ('split','replaced')", ()))
         by = {r["status"]: r["n"] for r in self._all(f"SELECT status, COUNT(*) n FROM documents {where} GROUP BY status", args)}
         agg = self._one(f"SELECT AVG(processing_ms) ms, SUM(COALESCE(field_count,0)) f, "
                         f"SUM(COALESCE(corrected_count,0)) c FROM documents {where} AND status IN ('success','validated')",
@@ -385,7 +388,7 @@ class Store:
             f"SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed "
             f"FROM documents {where} GROUP BY day ORDER BY day DESC LIMIT {days}", args)][::-1]
         pages = self._one(f"SELECT COALESCE(SUM(u.pages),0) p, COALESCE(SUM(u.credits),0) cr FROM usage u "
-                          f"JOIN documents d ON d.id=u.document_id {where.replace(" AND COALESCE(status,'')<>'split'", '').replace('instance_id', 'd.instance_id')} "
+                          f"JOIN documents d ON d.id=u.document_id {where.replace(" AND COALESCE(status,'') NOT IN ('split','replaced')", '').replace('instance_id', 'd.instance_id')} "
                           f"AND u.capability IN ('ocr_printed','tables','ocr_handwriting','layout','key_value')", args)
         month = self._one(f"SELECT COUNT(*) n FROM documents {where} AND created_at >= ?",
                           (*args, datetime.now(timezone.utc).strftime("%Y-%m-01")))

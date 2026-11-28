@@ -51,12 +51,32 @@ def _empty(v) -> bool:
     return v in (None, "", [])
 
 
-def _rule_label(rule: str, values: dict) -> Optional[str]:
-    """None when the cross-field rule passes, else how it is reported."""
+# 3.4.3: plain names of built-in cross-field checks (expression -> name), shown instead of the expression
+CHECK_NAMES: dict[str, str] = {}
+
+
+def check_name(label: str) -> str:
+    """How a failed check is shown: its plain name when it has one, else the expression as written."""
+    expr, _, _rest = label.partition(" (")
+    return CHECK_NAMES.get(expr.strip()) or label
+
+
+def _rule_check(rule: str, values: dict) -> tuple[str, Optional[str]]:
+    """("pass", None), ("skip", None) when a value it needs is missing (3.4.3: a missing value is reported by its own
+    required check, not as a broken calculation), or ("fail", how it is reported)."""
     try:
-        return None if bool(safe_eval(rule, values)) else rule
+        return ("pass", None) if bool(safe_eval(rule, values)) else ("fail", rule)
+    except TypeError:
+        if any(n in values and _empty(values[n]) for n in _rule_names(rule)):
+            return "skip", None
+        return "fail", f"{rule} (TypeError)"
     except Exception as e:
-        return f"{rule} ({type(e).__name__})"
+        return "fail", f"{rule} ({type(e).__name__})"
+
+
+def _rule_label(rule: str, values: dict) -> Optional[str]:
+    """None when the cross-field rule passes or cannot run for a missing value, else how it is reported."""
+    return _rule_check(rule, values)[1]
 
 
 def _field_reasons(fld: ExtractedField, fd, threshold: float) -> list[ReviewReason]:
@@ -93,7 +113,7 @@ def review_reasons(doc: DocumentResult, schema: FieldSchema | None, field_thresh
         values = {f.name: f.value for f in doc.fields}
         failed_rules = [l for r in (schema.validation if schema else []) if (l := _rule_label(r, values))]
     names = {f.name for f in doc.fields}
-    out = [ReviewReason(reason="check_failed", message=f"Check failed: {label}",
+    out = [ReviewReason(reason="check_failed", message=f"Check failed: {check_name(label)}",
                         fields=sorted(_rule_names(label.split(" (")[0]) & names)) for label in failed_rules]
     for fld in doc.fields:
         fd = defs.get(fld.name)
@@ -163,7 +183,9 @@ def score(doc: DocumentResult, schema: FieldSchema | None, field_threshold: floa
     if schema and schema.validation:
         values = {f.name: f.value for f in doc.fields}
         for rule in schema.validation:
-            label = _rule_label(rule, values)
+            state, label = _rule_check(rule, values)
+            if state == "skip":
+                continue          # not checked: it corroborates nothing
             if label is not None:
                 failed.append(label)
                 continue

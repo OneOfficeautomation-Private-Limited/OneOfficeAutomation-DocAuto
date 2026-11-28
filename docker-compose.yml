@@ -16,7 +16,7 @@ services:
 
   docauto:
     build: .
-    image: oneoffice/docauto:3.4.2
+    image: oneoffice/docauto:3.4.3
     ports: ["8085:8085"]
     depends_on:
       postgres:

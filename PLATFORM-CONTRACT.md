@@ -138,6 +138,23 @@ forwards `admin/update` or `admin/installer.bat`.
 - **Compare who reads the fields** (3.4.2): `POST df/test` takes `compare` = `pages` (the default: the engines read the
   page) or `fields` (the engines read the fields from the same reading of the page); `readBy` then names the field
   engine.
+- **One document is answered as itself** (3.4.3): an upload with `wait=true` to a process that recognises types, whose
+  file turns out to be one document, answers with that part's `documentId` (and its status and type) plus `batchId`;
+  `GET df/documents/{batch}` adds `onlyPart` when the batch has one part.
+- **A type change is not a rejection** (3.4.3): `reclassify` gives the old copy the status `replaced` (validated_by
+  `reclassified`, a flag with `replacedBy`: the new document). Stats, counts, a batch's parts and the documents list
+  leave it out (list it with `status=replaced`).
+- **No checks of a type the document is not** (3.4.3): a document that fails the type check has `doctype_id` null and
+  only the reason `unclassified` (review) or none (rejected).
+- **Built-in checks by name** (3.4.3): a failed built-in check is reported by its name ("Amounts add up (...)"), and a
+  check that cannot run because a value is missing is skipped (the value's own required check reports it).
+- **The receiver's reason** (3.4.3): a refused web address or Start-an-agent delivery is logged as `HTTP <code>: <the
+  reply's error message and suggested fix>`.
+- **Lookup with a condition** (3.4.3): a lookup rule may add `whereColumn` and `whereValue`: a row found whose column
+  has another value is flagged ("... is in <table>, but its Status is 'blocked', not 'active'"). Saving refuses a
+  column the table does not have.
+- **Can DocFlow call back?** (3.4.3): `GET admin/version` adds `platformCallback` (true when `DOCAUTO_PLATFORM_URL` is
+  set), so the Command Center can warn that agents, triggers, e-mail and engine keys cannot reach it.
 
 ### What the Command Center adds to a process before saving it
 

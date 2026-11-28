@@ -76,7 +76,9 @@ def test_smart_inbox_splits_mixed_batch(client):
 
 def test_unclassified_goes_to_review_and_reclassify(client):
     d = up(client, "smart-inbox", pdf([["Hello world", "nothing to see here"]]), "random.pdf")
-    child = client.get(f"{DF}/documents/{d['documentId']}").json()["children"][0]
+    # 3.4.3: a file that is one document is answered with that document (the batch is batchId)
+    assert client.get(f"{DF}/documents/{d['batchId']}").json()["onlyPart"] == d["documentId"]
+    child = client.get(f"{DF}/documents/{d['documentId']}").json()
     assert child["status"] == "validation" and child["doctype_id"] is None
     q = client.get(f"{DF}/review").json()
     assert any(x["id"] == child["id"] and x["doctypeName"] == "Unclassified" for x in q)
